@@ -20,3 +20,6 @@ I also include sequencer actions to plate solve an image and update the alignmen
 
 The plugin has been developed and tested using CPWI with a Celestron Astro-Fi 6 mount and scope. It is beleived it will 
 work with other CPWI controlled Alt Azimuth mounts but it cannot be guranteed.
+
+## Bug Reporting
+Please raise an issue in repository with as much information as possibe.
