@@ -1,0 +1,20 @@
+<Project>
+
+  <!--
+    Keep the test project's sources out of the plugin's compile.
+
+    The plugin .csproj lives at the repository root and uses the default SDK
+    glob (**/*.cs), so without this exclusion every .cs file under tests/ would
+    be swept into the plugin's own build and break it. DefaultItemExcludes is
+    evaluated relative to each importing project's directory: for the plugin
+    (root) "tests/**/*.cs" excludes the test sources; for the test project
+    (tests/AddToAlignmentModel.Tests/) the same pattern resolves to a
+    non-existent nested path and therefore excludes nothing. This file is
+    behavior-neutral for the existing release build because the tests/ folder
+    did not exist there.
+  -->
+  <PropertyGroup>
+    <DefaultItemExcludes>$(DefaultItemExcludes);tests/**/*.cs</DefaultItemExcludes>
+  </PropertyGroup>
+
+</Project>
