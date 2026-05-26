@@ -230,8 +230,13 @@ namespace AddToAlignmentModel.Tests {
 
         [Fact]
         public void CreateCaptureSolverParameter_MapsAllProfileFields() {
+            // Binning is 1 on purpose: CaptureSolverParameter.PixelSize reports the
+            // BINNED pixel size (raw * Binning), which is the parameter object's own
+            // getter behavior, not part of the mapping ADP_Tools performs. Using
+            // binning 1 lets us verify the raw field mapping without entangling that
+            // scaling.
             Mock<IProfile> profile = ProfileFor(
-                numberOfAttempts: 3, binning: 2, downSample: 4, maxObjects: 500,
+                numberOfAttempts: 3, binning: 1, downSample: 4, maxObjects: 500,
                 reattemptDelayMinutes: 1.5, regions: 1000, searchRadius: 30.0,
                 blindFailover: true, focalLength: 700.0, pixelSize: 3.8);
             Coordinates coords = new Coordinates(10.0, 20.0, Epoch.J2000, Coordinates.RAType.Degrees);
@@ -239,7 +244,7 @@ namespace AddToAlignmentModel.Tests {
             CaptureSolverParameter p = ADP_Tools.CreateCaptureSolverParameter(profile.Object, coords);
 
             Assert.Equal(3, p.Attempts);                                  // null solveAttempts -> profile value
-            Assert.Equal((short)2, p.Binning);
+            Assert.Equal((short)1, p.Binning);
             Assert.Equal(4, p.DownSampleFactor);
             Assert.Equal(700.0, p.FocalLength);
             Assert.Equal(500, p.MaxObjects);
