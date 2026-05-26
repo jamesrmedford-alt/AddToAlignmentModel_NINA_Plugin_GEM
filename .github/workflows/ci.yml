@@ -1,0 +1,106 @@
+# Regression safety net for the AddToAlignmentModel plugin.
+#
+# Builds and runs the xUnit characterization tests on every push/PR and gates on
+# coverage of the Tier-1 pure logic (the code the eventual GEM work will touch).
+# This is separate from github-action.yaml, which only runs on release tags.
+#
+# Windows is required: the plugin and its transitive NINA/WPF dependencies are
+# Windows-only (net8.0-windows, UseWPF).
+name: CI
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+
+    env:
+      TEST_PROJECT: tests/AddToAlignmentModel.Tests/AddToAlignmentModel.Tests.csproj
+      # Tier-1 methods the gate enforces at >= 95% line coverage. ReadyToStart is
+      # intentionally absent: it calls a WPF MessageBox and cannot be unit-tested
+      # without a source refactor that this phase forbids.
+      GATE_METHODS: 'AboveMinAlt,ValidateConnections,CreateCaptureSolverParameter,get_AltStepSize,get_AzStepSize'
+      GATE_THRESHOLD: '0.95'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore $env:TEST_PROJECT
+
+      # -p:PostBuildEvent= neutralizes the plugin's local-install xcopy step,
+      # which has no NINA install to copy to on CI. The property flows to the
+      # referenced plugin project too.
+      - name: Build
+        run: dotnet build $env:TEST_PROJECT -c Release --no-restore -p:PostBuildEvent=
+
+      - name: Test with coverage
+        run: >
+          dotnet test $env:TEST_PROJECT
+          -c Release --no-build
+          --collect:"XPlat Code Coverage"
+          --settings coverlet.runsettings
+          --results-directory coverage
+          --logger "console;verbosity=normal"
+
+      - name: Generate HTML coverage report
+        run: |
+          dotnet tool install --global dotnet-reportgenerator-globaltool
+          reportgenerator -reports:coverage/**/coverage.cobertura.xml -targetdir:coverage/report -reporttypes:"Html;TextSummary"
+
+      - name: Coverage gate (Tier-1 methods >= 95%)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $report = Get-ChildItem -Path coverage -Recurse -Filter coverage.cobertura.xml | Select-Object -First 1
+          if (-not $report) { Write-Error 'No cobertura coverage file found.'; exit 1 }
+          Write-Host "Reading $($report.FullName)"
+
+          [xml]$xml = Get-Content $report.FullName
+          $targets   = $env:GATE_METHODS.Split(',')
+          $threshold = [double]::Parse($env:GATE_THRESHOLD, [System.Globalization.CultureInfo]::InvariantCulture)
+
+          $methods = $xml.SelectNodes('//class/methods/method')
+          $failed = $false
+          $seen = @{}
+
+          foreach ($m in $methods) {
+            $name = $m.GetAttribute('name')
+            if ($targets -contains $name) {
+              $rate = [double]::Parse($m.GetAttribute('line-rate'), [System.Globalization.CultureInfo]::InvariantCulture)
+              $seen[$name] = $true
+              if ($rate -lt $threshold) {
+                Write-Host ("FAIL  {0,-32} line-rate {1:P1} < {2:P0}" -f $name, $rate, $threshold)
+                $failed = $true
+              } else {
+                Write-Host ("PASS  {0,-32} line-rate {1:P1}" -f $name, $rate)
+              }
+            }
+          }
+
+          foreach ($t in $targets) {
+            if (-not $seen.ContainsKey($t)) {
+              Write-Host "FAIL  target method '$t' not found in coverage (no test exercised it?)"
+              $failed = $true
+            }
+          }
+
+          if ($failed) { Write-Error 'Tier-1 coverage gate failed.'; exit 1 }
+          Write-Host 'Tier-1 coverage gate passed.'
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/report

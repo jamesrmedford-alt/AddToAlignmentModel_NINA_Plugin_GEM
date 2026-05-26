@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat code coverage">
+        <Configuration>
+          <Format>cobertura</Format>
+
+          <!--
+            Tier-1 scope only. Coverage is measured exclusively for the pure
+            logic that the eventual GEM changes will touch:
+              - ADP_Tools                       (validation + coordinate helpers)
+              - ModelPointCreator + nested      (grid step-size math lives in the
+                ModelCreationParameters          nested ModelCreationParameters; the
+                                                 wildcard catches the nested type
+                                                 regardless of separator)
+            Everything else (WPF code-behind, MEF/plugin bootstrap, generated
+            Designer files, hardware-I/O wrappers, sequence items) is Tier-3 and
+            is never instrumented, so the reported number stays honest.
+
+            NOTE: ADP_Tools.ReadyToStart is in scope but is NOT enforced by the
+            CI gate (it calls a WPF MessageBox and is untestable without a
+            source refactor that this phase forbids). The gate checks specific
+            methods by name; see .github/workflows/ci.yml.
+          -->
+          <Include>[ADPUK.NINA.AddToAlignmentModel]ADPUK.NINA.AddToAlignmentModel.ADP_Tools,[ADPUK.NINA.AddToAlignmentModel]ADPUK.NINA.AddToAlignmentModel.ModelPointCreator*</Include>
+
+          <ExcludeByAttribute>Obsolete,GeneratedCodeAttribute,CompilerGeneratedAttribute</ExcludeByAttribute>
+          <SingleHit>false</SingleHit>
+          <UseSourceLink>false</UseSourceLink>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>
