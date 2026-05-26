@@ -1,17 +1,18 @@
 # Regression safety net for the AddToAlignmentModel plugin.
 #
-# Builds and runs the xUnit characterization tests on every push/PR and gates on
-# coverage of the Tier-1 pure logic (the code the eventual GEM work will touch).
-# This is separate from github-action.yaml, which only runs on release tags.
+# Builds and runs the xUnit characterization tests on every pull request and
+# gates on coverage of the Tier-1 pure logic (the code the eventual GEM work
+# will touch). This is separate from github-action.yaml, which only runs on
+# release tags.
+#
+# Triggered on pull_request only (not push) so each commit gets exactly one run.
+# That run carries the PR context the result-comment step needs.
 #
 # Windows is required: the plugin and its transitive NINA/WPF dependencies are
 # Windows-only (net8.0-windows, UseWPF).
 name: CI
 
 on:
-  push:
-    branches:
-      - '**'
   pull_request:
 
 permissions:
