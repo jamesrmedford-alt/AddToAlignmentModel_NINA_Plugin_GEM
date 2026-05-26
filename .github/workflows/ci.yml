@@ -130,7 +130,8 @@ jobs:
             let summary = '';
             try { summary = fs.readFileSync('coverage/report/Summary.txt', 'utf8'); } catch (e) {}
             const heading = status === 'success' ? 'passing' : `failing (${status})`;
-            let body = `${marker}\n## CI: ${heading}\n\n[View run](${runUrl}) - commit ${context.sha.substring(0, 7)}\n`;
+            const headSha = context.payload.pull_request.head.sha.substring(0, 7);
+            let body = `${marker}\n## CI: ${heading}\n\n[View run](${runUrl}) - commit ${headSha}\n`;
             if (summary) {
               body += `\n<details><summary>Tier-1 coverage summary</summary>\n\n\`\`\`\n${summary}\n\`\`\`\n</details>\n`;
             }
