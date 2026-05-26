@@ -253,7 +253,10 @@ namespace AddToAlignmentModel.Tests {
             Assert.Equal(1000, p.Regions);
             Assert.Equal(30.0, p.SearchRadius);
             Assert.True(p.BlindFailoverEnabled);
-            Assert.Same(coords, p.Coordinates);
+            // CaptureSolverParameter stores a copy of the coordinates rather than
+            // the same instance, so compare by value, not reference.
+            Assert.Equal(coords.RADegrees, p.Coordinates.RADegrees, 6);
+            Assert.Equal(coords.Dec, p.Coordinates.Dec, 6);
         }
 
         [Fact]
