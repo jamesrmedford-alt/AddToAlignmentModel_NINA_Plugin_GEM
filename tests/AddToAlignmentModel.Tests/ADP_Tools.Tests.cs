@@ -35,7 +35,7 @@ namespace AddToAlignmentModel.Tests {
 
         [Fact]
         public void AboveMinAlt_Coordinates_NullHorizon_ComparesAltitudeToThreshold() {
-            Coordinates coords = new Coordinates(45.0, 20.0, Epoch.J2000, RAType.Degrees);
+            Coordinates coords = new Coordinates(45.0, 20.0, Epoch.J2000, Coordinates.RAType.Degrees);
             double latitude = 50.0;
             double alt = ExpectedAltitude(coords, latitude);
 
@@ -45,7 +45,7 @@ namespace AddToAlignmentModel.Tests {
 
         [Fact]
         public void AboveMinAlt_Coordinates_WithHorizon_AddsHorizonAltitude() {
-            Coordinates coords = new Coordinates(45.0, 20.0, Epoch.J2000, RAType.Degrees);
+            Coordinates coords = new Coordinates(45.0, 20.0, Epoch.J2000, Coordinates.RAType.Degrees);
             double latitude = 50.0;
             double alt = ExpectedAltitude(coords, latitude);
 
@@ -234,7 +234,7 @@ namespace AddToAlignmentModel.Tests {
                 numberOfAttempts: 3, binning: 2, downSample: 4, maxObjects: 500,
                 reattemptDelayMinutes: 1.5, regions: 1000, searchRadius: 30.0,
                 blindFailover: true, focalLength: 700.0, pixelSize: 3.8);
-            Coordinates coords = new Coordinates(10.0, 20.0, Epoch.J2000, RAType.Degrees);
+            Coordinates coords = new Coordinates(10.0, 20.0, Epoch.J2000, Coordinates.RAType.Degrees);
 
             CaptureSolverParameter p = ADP_Tools.CreateCaptureSolverParameter(profile.Object, coords);
 
@@ -257,7 +257,7 @@ namespace AddToAlignmentModel.Tests {
                 numberOfAttempts: 3, binning: 2, downSample: 4, maxObjects: 500,
                 reattemptDelayMinutes: 1.5, regions: 1000, searchRadius: 30.0,
                 blindFailover: true, focalLength: 700.0, pixelSize: 3.8);
-            Coordinates coords = new Coordinates(10.0, 20.0, Epoch.J2000, RAType.Degrees);
+            Coordinates coords = new Coordinates(10.0, 20.0, Epoch.J2000, Coordinates.RAType.Degrees);
 
             CaptureSolverParameter p = ADP_Tools.CreateCaptureSolverParameter(profile.Object, coords, 7);
 
