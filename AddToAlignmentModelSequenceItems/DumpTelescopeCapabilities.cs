@@ -1,4 +1,5 @@
 using Newtonsoft.Json;
+using NINA.Astrometry;
 using NINA.Core.Model;
 using NINA.Core.Utility;
 using NINA.Core.Utility.Notification;
@@ -36,7 +37,7 @@ namespace ADPUK.NINA.AddToAlignmentModel.AddToAlignmentModelSequenceItems {
     /// target EAST of the meridian and once WEST, plus once at the home position.
     /// </summary>
     [ExportMetadata("Name", "Dump Telescope Capabilities (diagnostic)")]
-    [ExportMetadata("Description", "Diagnostic: writes connected mount info, GEM capability flags, a pier-side/hour-angle correlation, SupportedActions, and a non-destructive probe of Telescope:AddAlignmentReference to the NINA log and a timestamped file.")]
+    [ExportMetadata("Description", "Diagnostic: writes connected mount info, full capability flags, tracking modes and axis rates, a pier-side/hour-angle correlation, a read-only DestinationSideOfPier prediction map, SupportedActions, and a non-destructive probe of Telescope:AddAlignmentReference to the NINA log and a timestamped file.")]
     [ExportMetadata("Icon", "CrosshairSVG")]
     [ExportMetadata("Category", "Add To CPWI Alignment Model")]
     [Export(typeof(ISequenceItem))]
@@ -129,6 +130,21 @@ namespace ADPUK.NINA.AddToAlignmentModel.AddToAlignmentModelSequenceItems {
             TryAppend(sb, "TrackingRate",        () => info.TrackingRate.ToString());
             TryAppend(sb, "TimeToMeridianFlip",  () => $"{info.TimeToMeridianFlip:F4} h");
             TryAppend(sb, "TargetSideOfPier",    () => info.TargetSideOfPier?.ToString() ?? "<null>");
+            TryAppend(sb, "CanPulseGuide",       () => info.CanPulseGuide.ToString());
+            TryAppend(sb, "CanSetTrackingEnabled", () => info.CanSetTrackingEnabled.ToString());
+            TryAppend(sb, "CanSetPark",          () => info.CanSetPark.ToString());
+            TryAppend(sb, "CanSetDeclinationRate", () => info.CanSetDeclinationRate.ToString());
+            TryAppend(sb, "CanSetRightAscensionRate", () => info.CanSetRightAscensionRate.ToString());
+            TryAppend(sb, "GuideRateRA",         () => $"{info.GuideRateRightAscensionArcsecPerSec:F4} arcsec/s");
+            TryAppend(sb, "GuideRateDec",        () => $"{info.GuideRateDeclinationArcsecPerSec:F4} arcsec/s");
+            TryAppend(sb, "SiteElevation",       () => $"{info.SiteElevation:F1} m");
+            TryAppend(sb, "UTCDate",             () => info.UTCDate.ToString("yyyy-MM-dd HH:mm:ss"));
+            TryAppend(sb, "HasUnknownEpoch",     () => info.HasUnknownEpoch.ToString());
+            TryAppend(sb, "Slewing",             () => info.Slewing.ToString());
+            TryAppend(sb, "IsPulseGuiding",      () => info.IsPulseGuiding.ToString());
+            TryAppend(sb, "TrackingModes",       () => string.Join(", ", info.TrackingModes));
+            TryAppend(sb, "PrimaryAxisRates",    () => FormatAxisRates(info.PrimaryAxisRates));
+            TryAppend(sb, "SecondaryAxisRates",  () => FormatAxisRates(info.SecondaryAxisRates));
             sb.AppendLine();
 
             // -- Pier side vs meridian correlation --
@@ -158,6 +174,37 @@ namespace ADPUK.NINA.AddToAlignmentModel.AddToAlignmentModelSequenceItems {
                 sb.AppendLine(" positions to decide which is the reliable source of pier side.)");
             } catch (Exception ex) {
                 sb.AppendLine($"Could not compute hour-angle correlation: {ex.GetType().Name}: {ex.Message}");
+            }
+            sb.AppendLine();
+
+            // -- DestinationSideOfPier prediction map (read-only, no movement) --
+            // ASCOM DestinationSideOfPier predicts which pier side the mount would
+            // be on after slewing to a target - a pure calculation, no movement.
+            // We sample hour angles east and west of the current meridian at a mid
+            // declination to learn CPWI's pier-side logic without slewing. If the
+            // driver returns Unknown (common when uninitialized or unsupported),
+            // that itself tells us to derive pier side from hour angle instead.
+            sb.AppendLine("=== DestinationSideOfPier prediction map (read-only) ===");
+            try {
+                double lst = info.SiderealTime;
+                const double sampleDec = 45.0;
+                double[] hourAngles = { -6.0, -4.0, -2.0, -0.5, 0.5, 2.0, 4.0, 6.0 };
+                sb.AppendLine($"Sampling Dec={sampleDec:F0} deg across hour angle (LST={lst:F4} h):");
+                foreach (double ha in hourAngles) {
+                    double raH = lst - ha;
+                    while (raH < 0.0) { raH += 24.0; }
+                    while (raH >= 24.0) { raH -= 24.0; }
+                    string ew = ha < 0.0 ? "E" : "W";
+                    try {
+                        Coordinates coords = new Coordinates(Angle.ByHours(raH), Angle.ByDegree(sampleDec), Epoch.JNOW);
+                        var side = telescopeMediator.DestinationSideOfPier(coords);
+                        sb.AppendLine($"  HA={ha,5:F1}h ({ew})  RA={raH,7:F3}h  ->  {side}");
+                    } catch (Exception exItem) {
+                        sb.AppendLine($"  HA={ha,5:F1}h ({ew})  RA={raH,7:F3}h  ->  <{exItem.GetType().Name}: {exItem.Message}>");
+                    }
+                }
+            } catch (Exception ex) {
+                sb.AppendLine($"Could not run DestinationSideOfPier map: {ex.GetType().Name}: {ex.Message}");
             }
             sb.AppendLine();
 
@@ -241,10 +288,19 @@ namespace ADPUK.NINA.AddToAlignmentModel.AddToAlignmentModelSequenceItems {
 
         private static void TryAppend(StringBuilder sb, string label, Func<string> getter) {
             try {
-                sb.AppendLine($"{label,-18}{getter()}");
+                sb.AppendLine($"{label,-26}{getter()}");
             } catch (Exception ex) {
-                sb.AppendLine($"{label,-18}<n/a: {ex.GetType().Name}>");
+                sb.AppendLine($"{label,-26}<n/a: {ex.GetType().Name}>");
             }
+        }
+
+        private static string FormatAxisRates(IList<(double, double)> rates) {
+            if (rates == null || rates.Count == 0) { return "(none)"; }
+            List<string> parts = new List<string>();
+            foreach ((double min, double max) in rates) {
+                parts.Add($"[{min:F4}..{max:F4}]");
+            }
+            return string.Join(" ", parts);
         }
     }
 }
