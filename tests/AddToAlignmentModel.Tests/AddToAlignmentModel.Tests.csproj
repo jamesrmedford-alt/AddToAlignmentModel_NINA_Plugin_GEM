@@ -34,13 +34,17 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- NINA's native NOVAS library, required for coordinate transforms
-         (Coordinates.Transform / TopocentricCoordinates.Transform -> NOVAS).
-         NINA's DllLoader probes External/x64/NOVAS relative to the assembly, so
-         the file is stored at that same relative path and copied as-is to the
-         build output. Sourced from a NINA install; the JPLEPH ephemeris is not
-         needed for stellar J2000<->JNOW precession. -->
+    <!-- NINA's native astrometry libraries, required for coordinate transforms
+         (Coordinates.Transform / TopocentricCoordinates.Transform). The transform
+         P/Invokes NOVAS and SOFA. NINA's DllLoader probes External/x64/<lib>
+         relative to the assembly, so the files are stored at that same relative
+         path and copied as-is to the build output. Sourced from a NINA install.
+         The JPLEPH ephemeris and the UT1-UTC SQLite DB are not vendored: NINA
+         logs their absence and falls back, so the stellar transform still runs. -->
     <None Include="External\x64\NOVAS\NOVAS31lib.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="External\x64\SOFA\SOFAlib.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
