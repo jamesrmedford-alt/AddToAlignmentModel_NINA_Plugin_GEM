@@ -30,12 +30,13 @@ namespace ADPUK.NINA.AddToAlignmentModel.AddToAlignmentModelSequenceItems {
     ///
     /// After build + install in NINA, find it in the sequencer under the
     /// "Add To CPWI Alignment Model" category as "Dump Telescope Capabilities".
-    /// Run it once with the AVX connected via CPWI in EQ mode; results go to
-    /// the NINA log and a timestamped .txt file under
-    /// %LOCALAPPDATA%\NINA\Logs\.
+    /// Run it with the AVX connected via CPWI in EQ mode; results go to the
+    /// NINA log and a timestamped .txt file under %LOCALAPPDATA%\NINA\Logs\.
+    /// For the pier-side correlation, run it twice: once with the scope on a
+    /// target EAST of the meridian and once WEST, plus once at the home position.
     /// </summary>
     [ExportMetadata("Name", "Dump Telescope Capabilities (diagnostic)")]
-    [ExportMetadata("Description", "Diagnostic: writes connected mount info, SupportedActions, and a non-destructive probe of Telescope:AddAlignmentReference to the NINA log and a timestamped file.")]
+    [ExportMetadata("Description", "Diagnostic: writes connected mount info, GEM capability flags, a pier-side/hour-angle correlation, SupportedActions, and a non-destructive probe of Telescope:AddAlignmentReference to the NINA log and a timestamped file.")]
     [ExportMetadata("Icon", "CrosshairSVG")]
     [ExportMetadata("Category", "Add To CPWI Alignment Model")]
     [Export(typeof(ISequenceItem))]
@@ -113,6 +114,51 @@ namespace ADPUK.NINA.AddToAlignmentModel.AddToAlignmentModelSequenceItems {
             TryAppend(sb, "SiderealTime",     () => $"{info.SiderealTime:F6} h");
             TryAppend(sb, "SiteLatitude",     () => $"{info.SiteLatitude:F4} deg");
             TryAppend(sb, "SiteLongitude",    () => $"{info.SiteLongitude:F4} deg");
+            sb.AppendLine();
+
+            // -- GEM-relevant capability flags --
+            // What the driver admits it can do in the current connection mode.
+            // These inform the German-equatorial pier-side / meridian handling.
+            sb.AppendLine("--- Capabilities (GEM-relevant) ---");
+            TryAppend(sb, "CanSlew",             () => info.CanSlew.ToString());
+            TryAppend(sb, "CanPark",             () => info.CanPark.ToString());
+            TryAppend(sb, "CanFindHome",         () => info.CanFindHome.ToString());
+            TryAppend(sb, "CanSetPierSide",      () => info.CanSetPierSide.ToString());
+            TryAppend(sb, "CanMovePrimaryAxis",  () => info.CanMovePrimaryAxis.ToString());
+            TryAppend(sb, "CanMoveSecondaryAxis",() => info.CanMoveSecondaryAxis.ToString());
+            TryAppend(sb, "TrackingRate",        () => info.TrackingRate.ToString());
+            TryAppend(sb, "TimeToMeridianFlip",  () => $"{info.TimeToMeridianFlip:F4} h");
+            TryAppend(sb, "TargetSideOfPier",    () => info.TargetSideOfPier?.ToString() ?? "<null>");
+            sb.AppendLine();
+
+            // -- Pier side vs meridian correlation --
+            // ASCOM's SideOfPier is reported inconsistently across drivers (CPWI
+            // may return Unknown). Hour angle (HA = LocalSiderealTime - RA) tells
+            // us deterministically which side of the meridian the scope points to.
+            // Capturing both, at one target EAST and one WEST of the meridian,
+            // tells us whether the driver's SideOfPier is trustworthy or whether
+            // we should derive pier side from HA ourselves for grid partitioning.
+            sb.AppendLine("=== Pier side / meridian correlation ===");
+            sb.AppendLine("Run once with the scope EAST of the meridian and once WEST.");
+            try {
+                double lst = info.SiderealTime;
+                double ra = info.RightAscension;
+                double ha = lst - ra;
+                while (ha < -12.0) { ha += 24.0; }
+                while (ha >= 12.0) { ha -= 24.0; }
+                string impliedSide = ha < 0.0
+                    ? "object EAST of meridian (rising)"
+                    : "object WEST of meridian (setting)";
+                sb.AppendLine($"{"SiderealTime(h)",-20}{lst:F6}");
+                sb.AppendLine($"{"RightAscension(h)",-20}{ra:F6}");
+                sb.AppendLine($"{"HourAngle(h)",-20}{ha:F6}");
+                sb.AppendLine($"{"HA implies",-20}{impliedSide}");
+                TryAppend(sb, "Driver SideOfPier", () => info.SideOfPier.ToString());
+                sb.AppendLine("(We correlate 'HA implies' against 'Driver SideOfPier' across both");
+                sb.AppendLine(" positions to decide which is the reliable source of pier side.)");
+            } catch (Exception ex) {
+                sb.AppendLine($"Could not compute hour-angle correlation: {ex.GetType().Name}: {ex.Message}");
+            }
             sb.AppendLine();
 
             // -- SupportedActions (the canonical ASCOM discovery property) --
