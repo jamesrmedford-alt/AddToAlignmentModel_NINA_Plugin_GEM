@@ -33,4 +33,16 @@
     <ProjectReference Include="..\..\AddToAlignmentModel_NINA_Plugin.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- NINA's native NOVAS library, required for coordinate transforms
+         (Coordinates.Transform / TopocentricCoordinates.Transform -> NOVAS).
+         NINA's DllLoader probes External/x64/NOVAS relative to the assembly, so
+         the file is stored at that same relative path and copied as-is to the
+         build output. Sourced from a NINA install; the JPLEPH ephemeris is not
+         needed for stellar J2000<->JNOW precession. -->
+    <None Include="External\x64\NOVAS\NOVAS31lib.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

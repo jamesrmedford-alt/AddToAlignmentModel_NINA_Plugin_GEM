@@ -26,14 +26,10 @@ namespace AddToAlignmentModel.Tests {
 
         private const string AddReferenceAction = "Telescope:AddAlignmentReference";
 
-        // CreateModelPoint and GetCurrentLocation transform coordinates to JNOW at
-        // entry, which calls into NINA's native NOVAS library (NOVAS31lib.dll) and
-        // JPLEPH ephemeris. Those native files only ship inside a NINA install, not
-        // in a headless test bin, so these paths throw DllNotFoundException on CI.
-        // Same category of environmental exclusion as ReadyToStart's WPF MessageBox.
-        // The SolveDirectToMount tests below need no transform and run normally.
-        private const string RequiresNovas =
-            "Requires NINA native NOVAS library + JPLEPH ephemeris (coordinate Transform to JNOW); not available headless on CI.";
+        // CreateModelPoint and GetCurrentLocation transform coordinates to JNOW,
+        // which calls NINA's native NOVAS library. That DLL is vendored into the
+        // test project (native/NOVAS31lib.dll, copied to External/x64/NOVAS in the
+        // build output) so these tests run on CI.
 
         private static TopocentricCoordinates Topo(double azimuth, double altitude) {
             return new TopocentricCoordinates(
@@ -89,7 +85,7 @@ namespace AddToAlignmentModel.Tests {
 
         // ---- CreateModelPoint --------------------------------------------------
 
-        [Fact(Skip = RequiresNovas)]
+        [Fact]
         public async Task CreateModelPoint_AboveHorizonAndSolved_SlewsAndPushesReference() {
             ModelPointCreatorHarness harness = new ModelPointCreatorHarness(cameraConnected: true);
             ModelPointCreator creator = harness.Create(Solved());
@@ -103,7 +99,7 @@ namespace AddToAlignmentModel.Tests {
             Assert.NotEqual(ViewStrings.PlateSolveFailed, point.ActualRAString);
         }
 
-        [Fact(Skip = RequiresNovas)]
+        [Fact]
         public async Task CreateModelPoint_AboveHorizonButSolveFails_MarksFailedAndPushesNothing() {
             ModelPointCreatorHarness harness = new ModelPointCreatorHarness(cameraConnected: true);
             ModelPointCreator creator = harness.Create(Failed());
@@ -116,7 +112,7 @@ namespace AddToAlignmentModel.Tests {
             harness.Telescope.Verify(t => t.Action(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
         }
 
-        [Fact(Skip = RequiresNovas)]
+        [Fact]
         public async Task CreateModelPoint_TargetBelowHorizon_ThrowsFromUnconditionalServiceClose() {
             // Characterizes a latent bug: CreateModelPoint's finally block always
             // calls service.DelayedClose, but the window service is only created on
@@ -136,7 +132,7 @@ namespace AddToAlignmentModel.Tests {
 
         // ---- GetCurrentLocation ------------------------------------------------
 
-        [Fact(Skip = RequiresNovas)]
+        [Fact]
         public async Task GetCurrentLocation_Success_PushesReference() {
             ModelPointCreatorHarness harness = new ModelPointCreatorHarness();
             ModelPointCreator creator = harness.Create(Solved());
