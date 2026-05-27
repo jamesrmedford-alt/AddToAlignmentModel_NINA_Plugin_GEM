@@ -74,7 +74,7 @@ namespace ADPUK.NINA.AddToAlignmentModel {
 
                 return result;
             } finally {
-                service.DelayedClose(new TimeSpan(0, 0, plateSolveCloseDelay));
+                service?.DelayedClose(new TimeSpan(0, 0, plateSolveCloseDelay));
             }
         }
 
@@ -86,7 +86,7 @@ namespace ADPUK.NINA.AddToAlignmentModel {
                     service.Show(PlateSolveStatusVM, Loc.Instance["Lbl_SequenceItem_Platesolving_SolveAndSync_Name"], System.Windows.ResizeMode.CanResize, System.Windows.WindowStyle.ToolWindow);
             }
             PlateSolveResult result = await DoSolve(progress, solveAttempts, token);
-            service.DelayedClose(new TimeSpan(0,0, plateSolveCloseDelay));
+            service?.DelayedClose(new TimeSpan(0,0, plateSolveCloseDelay));
             if (!result.Success) {
                 ModelPoint modelPoint = new ModelPoint() {
                     ActualRAString = ViewStrings.PlateSolveFailed
@@ -144,7 +144,7 @@ namespace ADPUK.NINA.AddToAlignmentModel {
                     return modelPoint;
                 }
             } finally {
-                service.DelayedClose(new TimeSpan(0, 0, creationParameters.PlateSolveCloseDelay));
+                service?.DelayedClose(new TimeSpan(0, 0, creationParameters.PlateSolveCloseDelay));
             }
         }
 

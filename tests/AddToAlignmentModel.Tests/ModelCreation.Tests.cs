@@ -113,20 +113,21 @@ namespace AddToAlignmentModel.Tests {
         }
 
         [Fact]
-        public async Task CreateModelPoint_TargetBelowHorizon_ThrowsFromUnconditionalServiceClose() {
-            // Characterizes a latent bug: CreateModelPoint's finally block always
-            // calls service.DelayedClose, but the window service is only created on
-            // the camera-connected solve path. A below-horizon point reaches the
-            // finally with a null service and throws NullReferenceException. This
-            // can fire in real runs for low grid points. Pinned so the GEM rework
-            // (which revisits this method) cannot change it silently.
+        public async Task CreateModelPoint_TargetBelowHorizon_MarksBelowHorizon_AndPushesNothing() {
+            // A below-horizon point is skipped: marked below-horizon, no slew, no
+            // alignment reference pushed. This path previously threw
+            // NullReferenceException from an unconditional service.DelayedClose in
+            // finally (the window service is only created on the camera-connected
+            // solve path); that close is now null-safe.
             ModelPointCreatorHarness harness = new ModelPointCreatorHarness(cameraConnected: true);
             ModelPointCreator creator = harness.Create(Solved());
             Params parameters = PointParams(Topo(90.0, 10.0), minElevationAboveHorizon: 20.0);
 
-            await Assert.ThrowsAsync<NullReferenceException>(() =>
-                creator.CreateModelPoint(parameters, new Progress<ApplicationStatus>(), CancellationToken.None, showDialog: true));
+            ModelPoint point = await creator.CreateModelPoint(
+                parameters, new Progress<ApplicationStatus>(), CancellationToken.None, showDialog: true);
 
+            Assert.Equal(ViewStrings.TargetBelowHorizon, point.ActualRAString);
+            harness.Telescope.Verify(t => t.SlewToCoordinatesAsync(It.IsAny<Coordinates>(), It.IsAny<CancellationToken>()), Times.Never);
             harness.Telescope.Verify(t => t.Action(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
         }
 
