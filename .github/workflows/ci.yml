@@ -6,7 +6,13 @@
 # release tags.
 #
 # Triggered on pull_request only (not push) so each commit gets exactly one run.
-# That run carries the PR context the result-comment step needs.
+#
+# Notification: the final step DELETES any prior status comment and POSTs a
+# fresh one on every outcome. A subscribed Claude Code session is woken by
+# issue_comment.created events only - editing a sticky comment in place (PATCH)
+# or relying on check-run status does NOT wake it. The build/test output is
+# tee'd to ci-run.log and its tail is embedded in failure comments so the
+# session can diagnose without fetching auth-gated Actions logs.
 #
 # Windows is required: the plugin and its transitive NINA/WPF dependencies are
 # Windows-only (net8.0-windows, UseWPF).
@@ -18,7 +24,6 @@ on:
 permissions:
   contents: read
   pull-requests: write
-  issues: write
 
 jobs:
   test:
@@ -44,21 +49,21 @@ jobs:
       - name: Restore
         run: dotnet restore $env:TEST_PROJECT
 
+      # Combined so all output lands in ci-run.log (tee). bash on the runner uses
+      # -eo pipefail, so a failed dotnet command fails the step and is captured.
       # -p:PostBuildEvent= neutralizes the plugin's local-install xcopy step,
-      # which has no NINA install to copy to on CI. The property flows to the
+      # which has no NINA install to copy to on CI; the property flows to the
       # referenced plugin project too.
-      - name: Build
-        run: dotnet build $env:TEST_PROJECT -c Release --no-restore -p:PostBuildEvent=
-
-      - name: Test with coverage
-        run: >
-          dotnet test $env:TEST_PROJECT
-          -c Release --no-build
-          --collect:"XPlat Code Coverage"
-          --settings coverlet.runsettings
-          --results-directory coverage
-          --logger "GitHubActions;summary.includePassedTests=false"
-          --logger "console;verbosity=normal"
+      - name: Build and test
+        shell: bash
+        run: |
+          dotnet build "$TEST_PROJECT" -c Release --no-restore -p:PostBuildEvent= 2>&1 | tee ci-run.log
+          dotnet test "$TEST_PROJECT" -c Release --no-build \
+            --collect:"XPlat Code Coverage" \
+            --settings coverlet.runsettings \
+            --results-directory coverage \
+            --logger "GitHubActions;summary.includePassedTests=false" \
+            --logger "console;verbosity=normal" 2>&1 | tee -a ci-run.log
 
       - name: Generate HTML coverage report
         run: |
@@ -70,8 +75,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $report = Get-ChildItem -Path coverage -Recurse -Filter coverage.cobertura.xml | Select-Object -First 1
-          if (-not $report) { Write-Error 'No cobertura coverage file found.'; exit 1 }
-          Write-Host "Reading $($report.FullName)"
+          if (-not $report) { 'gate: no cobertura coverage file found.' | Add-Content ci-run.log; Write-Error 'No cobertura coverage file found.'; exit 1 }
 
           [xml]$xml = Get-Content $report.FullName
           $targets   = $env:GATE_METHODS.Split(',')
@@ -80,6 +84,7 @@ jobs:
           $methods = $xml.SelectNodes('//class/methods/method')
           $failed = $false
           $seen = @{}
+          $lines = New-Object System.Collections.Generic.List[string]
 
           foreach ($m in $methods) {
             $name = $m.GetAttribute('name')
@@ -87,20 +92,21 @@ jobs:
               $rate = [double]::Parse($m.GetAttribute('line-rate'), [System.Globalization.CultureInfo]::InvariantCulture)
               $seen[$name] = $true
               if ($rate -lt $threshold) {
-                Write-Host ("FAIL  {0,-32} line-rate {1:P1} < {2:P0}" -f $name, $rate, $threshold)
-                $failed = $true
+                $lines.Add(("FAIL  {0,-32} line-rate {1:P1} < {2:P0}" -f $name, $rate, $threshold)); $failed = $true
               } else {
-                Write-Host ("PASS  {0,-32} line-rate {1:P1}" -f $name, $rate)
+                $lines.Add(("PASS  {0,-32} line-rate {1:P1}" -f $name, $rate))
               }
             }
           }
-
           foreach ($t in $targets) {
             if (-not $seen.ContainsKey($t)) {
-              Write-Host "FAIL  target method '$t' not found in coverage (no test exercised it?)"
-              $failed = $true
+              $lines.Add("FAIL  target method '$t' not found in coverage (no test exercised it?)"); $failed = $true
             }
           }
+
+          $lines | ForEach-Object { Write-Host $_ }
+          '=== Tier-1 coverage gate ===' | Add-Content ci-run.log
+          $lines | Add-Content ci-run.log
 
           if ($failed) { Write-Error 'Tier-1 coverage gate failed.'; exit 1 }
           Write-Host 'Tier-1 coverage gate passed.'
@@ -112,35 +118,47 @@ jobs:
           name: coverage-report
           path: coverage/report
 
-      # Post/update a single sticky comment with the run result. issue_comment
-      # events propagate to subscribed sessions more reliably than check-run
-      # status events, so this is what wakes the watcher on completion. Runs on
-      # PR events (where the PR number is known) regardless of pass/fail.
-      - name: Post/update CI result comment
-        if: always() && github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+      # Delete any prior status comment, then POST a fresh one. The created event
+      # is what wakes a subscribed session; an edited (PATCH) comment does not.
+      - name: Post CI status to PR comment
+        if: always() && github.event.pull_request.number
+        shell: bash
         env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           JOB_STATUS: ${{ job.status }}
-        with:
-          script: |
-            const fs = require('fs');
-            const marker = '<!-- ci-status-comment -->';
-            const status = process.env.JOB_STATUS || 'unknown';
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            let summary = '';
-            try { summary = fs.readFileSync('coverage/report/Summary.txt', 'utf8'); } catch (e) {}
-            const heading = status === 'success' ? 'passing' : `failing (${status})`;
-            const headSha = context.payload.pull_request.head.sha.substring(0, 7);
-            let body = `${marker}\n## CI: ${heading}\n\n[View run](${runUrl}) - commit ${headSha}\n`;
-            if (summary) {
-              body += `\n<details><summary>Tier-1 coverage summary</summary>\n\n\`\`\`\n${summary}\n\`\`\`\n</details>\n`;
-            }
-            const { owner, repo } = context.repo;
-            const issue_number = context.issue.number;
-            const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number });
-            const existing = comments.find(c => c.body && c.body.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
-            } else {
-              await github.rest.issues.createComment({ owner, repo, issue_number, body });
-            }
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          MARKER='<!-- ci-status-comment -->'
+          {
+            printf '%s\n' "$MARKER"
+            case "$JOB_STATUS" in
+              success)
+                printf '## CI: passing — `%s`\n\n' "$RUN_ID"
+                printf '**Run:** %s\n\n' "$RUN_URL"
+                printf '**Head SHA:** `%s`\n\n' "$HEAD_SHA"
+                if [ -f coverage/report/Summary.txt ]; then
+                  printf '<details><summary>Tier-1 coverage summary</summary>\n\n```\n%s\n```\n\n</details>\n' "$(cat coverage/report/Summary.txt)"
+                fi
+                ;;
+              cancelled)
+                printf '## CI: cancelled — `%s`\n\n' "$RUN_ID"
+                printf '**Run:** %s\n' "$RUN_URL"
+                ;;
+              *)
+                printf '## CI: failing (%s) — `%s`\n\n' "$JOB_STATUS" "$RUN_ID"
+                printf '**Run:** %s\n\n' "$RUN_URL"
+                printf '**Head SHA:** `%s`\n\n' "$HEAD_SHA"
+                TAIL="$( [ -f ci-run.log ] && tail -c 50000 ci-run.log || echo '(no log captured)' )"
+                printf '<details><summary>Log tail</summary>\n\n```\n%s\n```\n\n</details>\n' "$TAIL"
+                ;;
+            esac
+          } > ci-comment.md
+          IDS="$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq "[.[] | select(.body | startswith(\"$MARKER\")) | .id] | .[]" 2>/dev/null || true)"
+          for ID in ${IDS}; do
+            gh api -X DELETE "repos/${REPO}/issues/comments/${ID}" >/dev/null || true
+          done
+          gh api -X POST "repos/${REPO}/issues/${PR_NUMBER}/comments" -F body=@ci-comment.md >/dev/null
