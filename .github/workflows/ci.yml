@@ -5,7 +5,9 @@
 # will touch). This is separate from github-action.yaml, which only runs on
 # release tags.
 #
-# Triggered on pull_request only (not push) so each commit gets exactly one run.
+# Runs on pull_request (one run per PR commit) and on push to main. Each run
+# publishes the compiled plugin as the "plugin-dll" artifact, so it can be
+# installed into NINA without a local build.
 #
 # Notification: the final step DELETES any prior status comment and POSTs a
 # fresh one on every outcome. A subscribed Claude Code session is woken by
@@ -20,6 +22,9 @@ name: CI
 
 on:
   pull_request:
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -64,6 +69,18 @@ jobs:
             --results-directory coverage \
             --logger "GitHubActions;summary.includePassedTests=false" \
             --logger "console;verbosity=normal" 2>&1 | tee -a ci-run.log
+
+      # The compiled plugin, downloadable from the run's Artifacts and droppable
+      # into NINA's plugins folder - no local build toolchain needed.
+      - name: Upload plugin DLL
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-dll
+          path: |
+            bin/Release/net8.0-windows/ADPUK.NINA.AddToAlignmentModel.dll
+            bin/Release/net8.0-windows/ADPUK.NINA.AddToAlignmentModel.pdb
+          if-no-files-found: warn
 
       - name: Generate HTML coverage report
         run: |
