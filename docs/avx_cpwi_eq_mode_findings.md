@@ -332,3 +332,41 @@ NINA RA/Dec and CPWI's UI → push **one** reference via the plugin → re-recor
 the bug lives in, and hence whether the fix is a CPWI bug report, a driver
 workaround, or a plugin-level mitigation (e.g. a commit/finalize step, or never
 relying on reported pose).
+
+### Sync vs AddAlignmentReference — a likely missing piece
+
+ASCOM exposes two distinct pointing *writes*, and the plugin only ever uses one:
+
+- **`SyncToCoordinates(ra, dec)`** — "you are currently pointing here; correct your
+  reported position to match." No movement; a single anchor that snaps the mount's
+  reported RA/Dec to truth. This is the standard NINA plate-solve **"sync to mount"**
+  operation (`telescopeMediator.Sync(...)`).
+- **`Action("Telescope:AddAlignmentReference", "ra:dec")`** — CPWI-custom; the only
+  custom action in `SupportedActions`. Session evidence: it contributes a point to
+  the **PointXP model**. It does **not** appear to refresh the simple reported-
+  position anchor.
+
+The plugin pushes via `AddAlignmentReference` in all three paths
+(`SolveDirectToMount`, `GetCurrentLocation`, `CreateModelPoint`) and **never calls
+`Sync`**. That asymmetry lines up with the stuck-pose behavior: the standard NINA
+slew-and-center-with-sync workflow keeps reported position healthy precisely
+because it Syncs, and **this bug does not surface there — only on the plugin's
+sync-less path.** Plausibly, once a model exists CPWI reports position *through*
+that model but, lacking any Sync anchor, has nothing pinning it to truth and falls
+back to the home reference.
+
+**Candidate plugin mitigation:** Sync **and** add a reference on each push — call
+`telescopeMediator.Sync(solvedCoordinates)` *then*
+`Action("Telescope:AddAlignmentReference", ...)`. The two are complementary: Sync
+keeps NINA-side position reporting alive; `AddAlignmentReference` builds the long-
+term PointXP model. (This is a behavior change to base push code — gate it on the
+test below before implementing.)
+
+**Test (decisive):** after the stuck pose appears, plate-solve the current
+position and issue an ASCOM **Sync** to the solved coordinates (NINA
+slew-and-center with sync, or Device Hub manually), then re-read the pose.
+
+- Pose **recovers** → diagnosis *and* fix found: the plugin must Sync alongside
+  every `AddAlignmentReference`.
+- Pose **stays stuck** → CPWI is ignoring Sync once `AddAlignmentReference` has run;
+  the problem is deeper (go to the trace log).
