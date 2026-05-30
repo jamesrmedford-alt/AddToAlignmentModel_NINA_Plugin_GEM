@@ -129,6 +129,13 @@ the uninitialized pole position.
    west, and confirm the *actual* `SideOfPier` matches what `DestinationSideOfPier`
    predicted (above was a prediction from an uninitialized mount).
 
+> **Update (Session 2):** item 2 is **confirmed** — live `SideOfPier` matched the
+> prediction (east → `pierWest`, west → `pierEast`). Item 1 is **substantially
+> demonstrated** (an 8-point model built and converged; scope physically
+> on-target) but still lacks a clean numeric before/after, because the CPWI pose
+> bug makes NINA's error readout unusable. See the Session 2 section below for the
+> corrected measurement protocol.
+
 ## How to reproduce
 
 Build/install the plugin, connect the AVX via CPWI in EQ mode, then run
@@ -136,3 +143,92 @@ Build/install the plugin, connect the AVX via CPWI in EQ mode, then run
 "Add To CPWI Alignment Model"). Output is written to the NINA log and a
 timestamped `TelescopeCapabilities_*.txt` under `%LOCALAPPDATA%\NINA\Logs\`.
 The `DestinationSideOfPier` prediction map is read-only and needs no slewing.
+
+---
+
+# Session 2 — live alignment-build test (2026-05-30)
+
+First end-to-end attempt to **build a CPWI pointing model from scratch** in EQ
+mode using only the plugin's plate-solve pushes (no CPWI star alignment), on an
+initialized, sky-tracking AVX.
+
+## Headline outcome
+
+`AddAlignmentReference` works as the alignment mechanism: repeated
+`SolveAddToAlignmentModel` pushes built an 8-point CPWI/PointXP model that
+converged to a sub-arc-minute internal fit (RMS ~56", Sensitivity 85 → 12).
+During the build the mount visibly began landing near the requested targets, and
+the operator confirmed the scope was **physically pointing approximately where it
+should** for the final plate solves — not tens of degrees off. A clean,
+numerically-verified before/after pointing improvement was **not** captured this
+session due to a measurement trap (below); next session closes that out.
+
+## Confirmed this session
+
+1. **Build-from-scratch works, no star align needed.** Starting from an empty
+   CPWI alignment (mount merely indexed + time/location), plate-solve pushes
+   registered as cal points and built a usable model. CPWI's manual star
+   alignment is not a prerequisite — the plugin is the alignment method.
+2. **Pier-side convention confirmed live.** With the mount tracking, observed
+   `SideOfPier` matched the Session-1 `DestinationSideOfPier` prediction
+   exactly: east of meridian → `pierWest`, west → `pierEast`. (Closes the
+   Session-1 outstanding item #2.)
+3. **CPWI requires points on both pier sides.** A 3-east/1-west model fit its
+   points but extrapolated wildly (tens of degrees) to the sparse side. A
+   balanced 4-east/4-west set converged. The grid loop must populate both sides.
+4. **The plate-solve push is robust to bad initial slews.** Early west-side
+   slews (before that side was constrained) missed badly, but the solver still
+   identified the true position and pushed correct coordinates, so each push
+   added a valid cal point and the model converged anyway. The build is
+   self-correcting.
+5. **Polar-alignment quality is a practical prerequisite.** Rough polar align
+   (~2.6° via TPPA) produced a steep, hard-to-model pointing gradient; tightening
+   to ~8' made the build behave. Note PointXP *inferred* a much larger axis error
+   (8–29°) than the true ~8' while the model was underdetermined — it absorbs
+   unmodelled residuals into the polar term until enough well-distributed points
+   are present. Trust the TPPA measurement, not PointXP's inferred axis error, at
+   low point counts.
+
+## Bug found and fixed
+
+**Epoch mismatch in `SolveDirectToMount` (fixed, PR #9, merged).** The
+single-point push path sent J2000 plate-solve coordinates to the JNOW mount
+without the `Transform(Epoch.JNOW)` its sibling methods apply — every reference
+point ~0.4° off. Installing the fix did not, by itself, fix the run, confirming
+the dominant factor was point count/distribution, not epoch; but the fix is
+necessary for an accurate model. A regression test pins the JNOW transform.
+
+## Measurement trap (why we have no clean before/after number yet)
+
+NINA's plate-solve **"Error distance" cannot be used to judge pointing on this
+driver.** It compares the plate-solved center to the mount's *reported* position,
+and CPWI's ASCOM driver reports a stuck pose near the pole (Dec ≈ 90°) regardless
+of where the scope actually points (first seen in Session 1's static Pose
+readings). The two final test solves bore this out exactly:
+
+| Test | Plate-solved Dec | Reported "Dec error" | 90° − solved Dec |
+|------|-----------------:|---------------------:|-----------------:|
+| West | +5.8°            | +84.3°               | +84.2°           |
+| East | +29.1°           | +60.9°               | +60.9°           |
+
+The error equals `90° − (actual Dec)` to the arc-minute in both cases — i.e. NINA
+was differencing against a reported Dec of ~90°, not measuring a real miss. The
+operator independently confirmed the scope was physically on-target. So these are
+**not** pointing failures; they are the pose bug surfacing in the error panel.
+
+> Design consequence: any pointing-quality telemetry (in the plugin or user
+> workflow) must compare plate-solved coordinates to the **intended target**, not
+> to `telescopeMediator.GetCurrentPosition()`, which is unreliable on CPWI. The
+> plate-solve push itself is unaffected because it uses solved coordinates.
+
+## Next-session protocol (clean Phase-2 measurement)
+
+1. Polar align to a few arc-minutes (TPPA).
+2. Re-confirm mount home/index; clear the pointing model.
+3. Push a balanced grid: both pier sides, Dec spread ~+20° to +60°, ≥8 points
+   (more is better for separating polar from other model terms).
+4. Measure pointing the correct way: slew to fresh, untouched stars **inside the
+   cal-point envelope**, and compare each plate-solved position to the
+   **intended target** coordinates (or use a SlewAndCenter workflow). Do not read
+   the mount-reported "Error distance".
+5. Baseline to beat: the ~1° pre-alignment pointing seen at session start.
