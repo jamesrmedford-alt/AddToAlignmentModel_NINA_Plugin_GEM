@@ -256,3 +256,79 @@ returns nonsense that here lands near the pole.
    **intended target** coordinates (or use a SlewAndCenter workflow). Do not read
    the mount-reported "Error distance".
 5. Baseline to beat: the ~1° pre-alignment pointing seen at session start.
+
+## Open investigation — the "reported pose reverts to home" behavior
+
+The central unknown: after cal points are pushed, the mount's ASCOM-reported
+position stops tracking and returns the **home position**. Refining what we know:
+
+- **It is the home position, not merely "near the pole".** The stuck readout was
+  Alt = SiteLatitude (39.23°), Az = 0.000°, Dec ≈ 89.98° — the exact signature of
+  a GEM parked at home (counterweight down, optical axis parallel to the polar
+  axis, pointing at the NCP). CPWI appears to report *home*, not a corrupted sky
+  position.
+- **A failed `AddAlignmentReference` call does NOT trigger it.** The diagnostic's
+  invalid-payload probe (which throws) ran before the baseline solve, yet the
+  baseline pose was still accurate (1° at Dec +34°). So it is not "any call flips a
+  state flag" — it correlates specifically with *successfully adding cal points /
+  having a live model*.
+- **PointXP's own fit was good (RMS ~56").** The model is not mathematically
+  degenerate, which weakens the "model is garbage" reading and points instead at
+  the **alignment-state machine or the ASCOM reporting layer**.
+
+### Leading hypotheses
+
+1. **Uncommitted / in-progress alignment (strongest).** CPWI's normal flow is
+   begin → add references → *finalize*. `AddAlignmentReference` may leave CPWI in
+   "alignment in progress," reporting the home/reference pose until the model is
+   committed — and we never commit, because no finalize action is exposed
+   (`SupportedActions` lists *only* `Telescope:AddAlignmentReference`).
+2. **ASCOM reporting-layer bug.** Once a model exists, the driver returns the
+   home pose over `RightAscension`/`Declination` even though CPWI internally points
+   correctly (consistent with the scope being visibly on target while ASCOM said
+   "home").
+3. **Coordinate-source switch on first reference** — driver stops dead-reckoning
+   from encoders and reports through a path that defaults to home until "aligned".
+
+### Discriminating test (free, do first)
+
+After pushing a point, **compare CPWI's own on-screen RA/Dec readout to NINA's**:
+
+- CPWI correct, NINA = home → **ASCOM driver reporting bug** (hypothesis 2);
+  model/pointing fine (interpretation A). Stop here — no deeper trace needed.
+- CPWI *also* = home → bug is upstream of the driver (hypothesis 1/3); proceed to
+  the ASCOM trace below.
+
+Plus two cheap probes: push **exactly one** reference and check the pose
+immediately (does a single point break it, or only an accumulated model?); and
+after it is stuck, do a **Sync or fresh GoTo** (if that recovers the pose, that
+strongly implicates the uncommitted-alignment theory).
+
+### ASCOM-layer debugging (if the bug is at/below the driver)
+
+Instrument the three layers independently — what NINA receives, what the driver
+returns, what CPWI internally holds:
+
+1. **ASCOM driver trace log.** In the CPWI telescope driver's Setup dialog
+   (ASCOM chooser → Properties), enable **Trace/Logging**. It writes every
+   property read/write to a timestamped file under `Documents\ASCOM\Logs\` (or
+   `%LOCALAPPDATA%\ASCOM\Logs\`). Push one reference, then have NINA poll RA/Dec;
+   the trace shows exactly what `get_RightAscension`/`get_Declination` returned and
+   when it changed — i.e. whether the *driver* invented "home" or CPWI fed it.
+2. **ASCOM Device Hub** as a live spy. Connect NINA to `ASCOM.DeviceHub.Telescope`,
+   and Device Hub to the CPWI driver. Watch property values update in real time and
+   invoke `Action("Telescope:AddAlignmentReference", …)` in isolation to see its
+   effect on the reported pose without the plugin in the loop.
+3. **CPWI application log** (typically under `%LOCALAPPDATA%\Celestron\CPWI\`). If
+   the driver trace shows CPWI sending wrong values *into* the driver, the CPWI log
+   may reveal what the alignment subsystem did at the moment of the push.
+4. **ASCOM Conform Tool** — validates the driver against the ITelescope spec;
+   reserve for confirming broader spec violations if position-reporting isn't the
+   only thing affected.
+
+**Minimal decisive run:** enable driver Trace → reconnect from NINA → record
+NINA RA/Dec and CPWI's UI → push **one** reference via the plugin → re-record both
+→ collect the screenshots and the timestamped trace file. That isolates the layer
+the bug lives in, and hence whether the fix is a CPWI bug report, a driver
+workaround, or a plugin-level mitigation (e.g. a commit/finalize step, or never
+relying on reported pose).
