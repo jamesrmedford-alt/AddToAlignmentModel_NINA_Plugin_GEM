@@ -4,10 +4,11 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:locale="clr-namespace:ADPUK.NINA.AddToAlignmentModel.Locales">
 
-    <!--  This data template will be displayed in N.I.N.A. on the options->plugin tab with the datacontext of the TestPlugin instance  -->
-    <!--  In order for this datatemplate to be picked correctly, the key has to follow the naming convention of <IPlugin.Name>_Options -->
-    <!--  Furthermore the Resource Dictionary has to be exported via code behind export attributes  -->
-    <DataTemplate x:Key="Add To CPWI Alt-Az Alignment Model_Options">
+    <!--  This data template is displayed on the plugin's settings page in N.I.N.A. with the plugin instance as datacontext.  -->
+    <!--  The key MUST equal "<IPluginManifest.Name>_Options"; Name comes from the AssemblyTitle attribute in            -->
+    <!--  Properties/AssemblyInfo.cs ("Add to CPWI Alignment Model"). If the key does not match exactly, N.I.N.A. renders -->
+    <!--  only the description + uninstall button and no settings UI. The dictionary is exported via [Export] in Options.xaml.cs.  -->
+    <DataTemplate x:Key="Add to CPWI Alignment Model_Options">
         <StackPanel Orientation="Vertical">
             <Grid HorizontalAlignment="Left">
                 <Grid.ColumnDefinitions>
