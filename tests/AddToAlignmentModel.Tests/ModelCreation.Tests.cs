@@ -83,6 +83,38 @@ namespace AddToAlignmentModel.Tests {
             harness.Telescope.Verify(t => t.Action(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
         }
 
+        [Fact]
+        public async Task SolveDirectToMount_PushesJNowTransformedCoordinates() {
+            // The mount's alignment model is in its native epoch (JNOW on CPWI);
+            // plate solves return J2000. The pushed payload must be the JNOW-
+            // transformed coordinates, not the raw J2000 result (the bug that put
+            // every reference point ~0.4 deg off).
+            Coordinates j2000 = new Coordinates(Angle.ByHours(6.0), Angle.ByDegree(45.0), Epoch.J2000);
+            PlateSolveResult result = new PlateSolveResult { Success = true, Coordinates = j2000 };
+
+            ModelPointCreatorHarness harness = new ModelPointCreatorHarness();
+            string payload = null;
+            harness.Telescope
+                .Setup(t => t.Action("Telescope:AddAlignmentReference", It.IsAny<string>()))
+                .Callback<string, string>((_, p) => payload = p)
+                .Returns(string.Empty);
+            ModelPointCreator creator = harness.Create(result);
+
+            await creator.SolveDirectToMount(1, 0, new Progress<ApplicationStatus>(), CancellationToken.None, showDialog: true);
+
+            Assert.NotNull(payload);
+            string[] parts = payload.Split(':');
+            double pushedRa = double.Parse(parts[0], System.Globalization.CultureInfo.InvariantCulture);
+            double pushedDec = double.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture);
+
+            Coordinates jnow = j2000.Transform(Epoch.JNOW);
+            // Pushed coordinates match the JNOW transform (within ~arcsec)...
+            Assert.Equal(jnow.RA, pushedRa, 3);
+            Assert.Equal(jnow.Dec, pushedDec, 3);
+            // ...and are meaningfully shifted from the raw J2000 RA (precession is real).
+            Assert.True(System.Math.Abs(pushedRa - j2000.RA) > 0.0001);
+        }
+
         // ---- CreateModelPoint --------------------------------------------------
 
         [Fact]

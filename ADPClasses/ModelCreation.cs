@@ -69,7 +69,12 @@ namespace ADPUK.NINA.AddToAlignmentModel {
 
                 PlateSolveResult result = await DoSolve(progress, solveAttempts, token);
                 if (result.Success) {
-                    telescopeMediator.Action("Telescope:AddAlignmentReference", $"{result.Coordinates.RA}:{result.Coordinates.Dec}");
+                    // Plate solves return J2000; the mount's alignment model is in
+                    // its native epoch (JNOW on CPWI/AVX). Transform before pushing,
+                    // matching GetCurrentLocation and CreateModelPoint. Without this
+                    // every reference point is offset by ~0.4 deg of precession.
+                    Coordinates resultCoordinates = result.Coordinates.Transform(Epoch.JNOW);
+                    telescopeMediator.Action("Telescope:AddAlignmentReference", $"{resultCoordinates.RA}:{resultCoordinates.Dec}");
                 }
 
                 return result;
