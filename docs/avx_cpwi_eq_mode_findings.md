@@ -130,11 +130,12 @@ the uninitialized pole position.
    predicted (above was a prediction from an uninitialized mount).
 
 > **Update (Session 2):** item 2 is **confirmed** — live `SideOfPier` matched the
-> prediction (east → `pierWest`, west → `pierEast`). Item 1 is **substantially
-> demonstrated** (an 8-point model built and converged; scope physically
-> on-target) but still lacks a clean numeric before/after, because the CPWI pose
-> bug makes NINA's error readout unusable. See the Session 2 section below for the
-> corrected measurement protocol.
+> prediction (east → `pierWest`, west → `pierEast`). Item 1 is **not yet
+> resolved**: an 8-point model built and converged internally and the scope looked
+> physically on-target, but the reported pose degraded after calibration so no
+> trustworthy pointing number was obtained — and it remains open whether the model
+> is genuinely good (measurement-only fault) or genuinely bad. See the Session 2
+> section below for both interpretations and the pose-independent test protocol.
 
 ## How to reproduce
 
@@ -154,14 +155,16 @@ initialized, sky-tracking AVX.
 
 ## Headline outcome
 
-`AddAlignmentReference` works as the alignment mechanism: repeated
-`SolveAddToAlignmentModel` pushes built an 8-point CPWI/PointXP model that
-converged to a sub-arc-minute internal fit (RMS ~56", Sensitivity 85 → 12).
-During the build the mount visibly began landing near the requested targets, and
-the operator confirmed the scope was **physically pointing approximately where it
-should** for the final plate solves — not tens of degrees off. A clean,
-numerically-verified before/after pointing improvement was **not** captured this
-session due to a measurement trap (below); next session closes that out.
+`AddAlignmentReference` works as the alignment *mechanism*: repeated
+`SolveAddToAlignmentModel` pushes built an 8-point CPWI/PointXP model with a
+sub-arc-minute internal fit (RMS ~56", Sensitivity 85 → 12), and the operator
+saw the scope physically landing approximately on the requested targets. **But
+whether the model actually produces good pointing is unconfirmed.** After the
+model was built, the mount's ASCOM-reported position degraded (see "Pose
+reporting degraded after calibration" below), so NINA's pointing-error readout
+became unusable and we captured no trustworthy before/after number. Two
+interpretations remain open; next session resolves them with a pose-independent
+measurement.
 
 ## Confirmed this session
 
@@ -194,32 +197,53 @@ session due to a measurement trap (below); next session closes that out.
 **Epoch mismatch in `SolveDirectToMount` (fixed, PR #9, merged).** The
 single-point push path sent J2000 plate-solve coordinates to the JNOW mount
 without the `Transform(Epoch.JNOW)` its sibling methods apply — every reference
-point ~0.4° off. Installing the fix did not, by itself, fix the run, confirming
-the dominant factor was point count/distribution, not epoch; but the fix is
-necessary for an accurate model. A regression test pins the JNOW transform.
+point ~0.4° off. Installing the fix did not, by itself, produce a clean run, so
+epoch was not the dominant factor; but the fix is necessary for an accurate
+model. A regression test pins the JNOW transform. Note: ~0.4° of consistent
+epoch error fed into the model builder could itself have contributed to the
+poorly-conditioned fit in the pre-fix points — another reason the next run
+should be built entirely with the fixed DLL.
 
-## Measurement trap (why we have no clean before/after number yet)
+## Pose reporting degraded after calibration (why we have no clean number yet)
 
-NINA's plate-solve **"Error distance" cannot be used to judge pointing on this
-driver.** It compares the plate-solved center to the mount's *reported* position,
-and CPWI's ASCOM driver reports a stuck pose near the pole (Dec ≈ 90°) regardless
-of where the scope actually points (first seen in Session 1's static Pose
-readings). The two final test solves bore this out exactly:
+The mount's ASCOM-reported position was **accurate before any cal points** and
+**garbage after the model was built** — the degradation tracks the calibration,
+it is not a constant driver fault:
 
-| Test | Plate-solved Dec | Reported "Dec error" | 90° − solved Dec |
-|------|-----------------:|---------------------:|-----------------:|
-| West | +5.8°            | +84.3°               | +84.2°           |
-| East | +29.1°           | +60.9°               | +60.9°           |
+- **Before calibration:** the baseline plate solve showed an error of **1°01'** at
+  an actual Dec of +34°. For that to be ~1°, the reported pose was ~Dec +34° —
+  accurate. (Operator confirms: error distance read sensibly at this stage.)
+- **After the 8-point model:** the two test solves showed error = **exactly
+  `90° − (actual Dec)`**, i.e. reported Dec had collapsed to ~90°:
 
-The error equals `90° − (actual Dec)` to the arc-minute in both cases — i.e. NINA
-was differencing against a reported Dec of ~90°, not measuring a real miss. The
-operator independently confirmed the scope was physically on-target. So these are
-**not** pointing failures; they are the pose bug surfacing in the error panel.
+  | Test | Plate-solved Dec | Reported "Dec error" | 90° − solved Dec |
+  |------|-----------------:|---------------------:|-----------------:|
+  | West | +5.8°            | +84.3°               | +84.2°           |
+  | East | +29.1°           | +60.9°               | +60.9°           |
 
-> Design consequence: any pointing-quality telemetry (in the plugin or user
-> workflow) must compare plate-solved coordinates to the **intended target**, not
-> to `telescopeMediator.GetCurrentPosition()`, which is unreliable on CPWI. The
-> plate-solve push itself is unaffected because it uses solved coordinates.
+**Likely mechanism:** CPWI reports position *through* its alignment model
+(encoder → model → RA/Dec). With no model you get the raw, roughly-accurate
+encoder/index position; once a poorly-conditioned model is loaded (PointXP
+inferred an 8–29° polar error vs a true ~8' from TPPA), the forward transform
+returns nonsense that here lands near the pole.
+
+**Two interpretations remain open — unresolved this session:**
+
+- **(A) Measurement-only:** the model is fine and pointing improved, but CPWI's
+  ASCOM *position reporting* breaks once references are added, so only NINA's
+  error readout is wrong. Supports: the scope was visibly ~on target; the push
+  path uses solved coords, not the reported pose.
+- **(B) The model is genuinely bad:** the underdetermined/imbalanced fit is poor
+  (the implausible inferred polar error is a red flag) and the broken pose is a
+  symptom; pointing to a new target could be genuinely off. The "scope looked
+  about right" observation weakly argues against this but is not conclusive.
+
+> Design consequence (holds under either interpretation): pointing-quality must be
+> judged by comparing **plate-solved coordinates to the intended target**, never to
+> `telescopeMediator.GetCurrentPosition()` on CPWI. Independently, the
+> plugin's `GetCurrentLocation` ("add current position") path *reads* the reported
+> pose and would therefore be unreliable on CPWI after calibration — flagged for
+> the GEM work. The plate-solve push path is unaffected (it uses solved coords).
 
 ## Next-session protocol (clean Phase-2 measurement)
 
