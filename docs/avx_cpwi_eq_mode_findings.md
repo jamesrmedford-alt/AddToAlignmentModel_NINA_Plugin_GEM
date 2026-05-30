@@ -129,6 +129,14 @@ the uninitialized pole position.
    west, and confirm the *actual* `SideOfPier` matches what `DestinationSideOfPier`
    predicted (above was a prediction from an uninitialized mount).
 
+> **Update (Session 2):** item 2 is **confirmed** — live `SideOfPier` matched the
+> prediction (east → `pierWest`, west → `pierEast`). Item 1 is **not yet
+> resolved**: an 8-point model built and converged internally and the scope looked
+> physically on-target, but the reported pose degraded after calibration so no
+> trustworthy pointing number was obtained — and it remains open whether the model
+> is genuinely good (measurement-only fault) or genuinely bad. See the Session 2
+> section below for both interpretations and the pose-independent test protocol.
+
 ## How to reproduce
 
 Build/install the plugin, connect the AVX via CPWI in EQ mode, then run
@@ -136,3 +144,229 @@ Build/install the plugin, connect the AVX via CPWI in EQ mode, then run
 "Add To CPWI Alignment Model"). Output is written to the NINA log and a
 timestamped `TelescopeCapabilities_*.txt` under `%LOCALAPPDATA%\NINA\Logs\`.
 The `DestinationSideOfPier` prediction map is read-only and needs no slewing.
+
+---
+
+# Session 2 — live alignment-build test (2026-05-30)
+
+First end-to-end attempt to **build a CPWI pointing model from scratch** in EQ
+mode using only the plugin's plate-solve pushes (no CPWI star alignment), on an
+initialized, sky-tracking AVX.
+
+## Headline outcome
+
+`AddAlignmentReference` works as the alignment *mechanism*: repeated
+`SolveAddToAlignmentModel` pushes built an 8-point CPWI/PointXP model with a
+sub-arc-minute internal fit (RMS ~56", Sensitivity 85 → 12), and the operator
+saw the scope physically landing approximately on the requested targets. **But
+whether the model actually produces good pointing is unconfirmed.** After the
+model was built, the mount's ASCOM-reported position degraded (see "Pose
+reporting degraded after calibration" below), so NINA's pointing-error readout
+became unusable and we captured no trustworthy before/after number. Two
+interpretations remain open; next session resolves them with a pose-independent
+measurement.
+
+## Confirmed this session
+
+1. **Build-from-scratch works, no star align needed.** Starting from an empty
+   CPWI alignment (mount merely indexed + time/location), plate-solve pushes
+   registered as cal points and built a usable model. CPWI's manual star
+   alignment is not a prerequisite — the plugin is the alignment method.
+2. **Pier-side convention confirmed live.** With the mount tracking, observed
+   `SideOfPier` matched the Session-1 `DestinationSideOfPier` prediction
+   exactly: east of meridian → `pierWest`, west → `pierEast`. (Closes the
+   Session-1 outstanding item #2.)
+3. **CPWI requires points on both pier sides.** A 3-east/1-west model fit its
+   points but extrapolated wildly (tens of degrees) to the sparse side. A
+   balanced 4-east/4-west set converged. The grid loop must populate both sides.
+4. **The plate-solve push is robust to bad initial slews.** Early west-side
+   slews (before that side was constrained) missed badly, but the solver still
+   identified the true position and pushed correct coordinates, so each push
+   added a valid cal point and the model converged anyway. The build is
+   self-correcting.
+5. **Polar-alignment quality is a practical prerequisite.** Rough polar align
+   (~2.6° via TPPA) produced a steep, hard-to-model pointing gradient; tightening
+   to ~8' made the build behave. Note PointXP *inferred* a much larger axis error
+   (8–29°) than the true ~8' while the model was underdetermined — it absorbs
+   unmodelled residuals into the polar term until enough well-distributed points
+   are present. Trust the TPPA measurement, not PointXP's inferred axis error, at
+   low point counts.
+
+## Bug found and fixed
+
+**Epoch mismatch in `SolveDirectToMount` (fixed, PR #9, merged).** The
+single-point push path sent J2000 plate-solve coordinates to the JNOW mount
+without the `Transform(Epoch.JNOW)` its sibling methods apply — every reference
+point ~0.4° off. Installing the fix did not, by itself, produce a clean run, so
+epoch was not the dominant factor; but the fix is necessary for an accurate
+model. A regression test pins the JNOW transform. Note: ~0.4° of consistent
+epoch error fed into the model builder could itself have contributed to the
+poorly-conditioned fit in the pre-fix points — another reason the next run
+should be built entirely with the fixed DLL.
+
+## Pose reporting degraded after calibration (why we have no clean number yet)
+
+The mount's ASCOM-reported position was **accurate before any cal points** and
+**garbage after the model was built** — the degradation tracks the calibration,
+it is not a constant driver fault:
+
+- **Before calibration:** the baseline plate solve showed an error of **1°01'** at
+  an actual Dec of +34°. For that to be ~1°, the reported pose was ~Dec +34° —
+  accurate. (Operator confirms: error distance read sensibly at this stage.)
+- **After the 8-point model:** the two test solves showed error = **exactly
+  `90° − (actual Dec)`**, i.e. reported Dec had collapsed to ~90°:
+
+  | Test | Plate-solved Dec | Reported "Dec error" | 90° − solved Dec |
+  |------|-----------------:|---------------------:|-----------------:|
+  | West | +5.8°            | +84.3°               | +84.2°           |
+  | East | +29.1°           | +60.9°               | +60.9°           |
+
+**Likely mechanism:** CPWI reports position *through* its alignment model
+(encoder → model → RA/Dec). With no model you get the raw, roughly-accurate
+encoder/index position; once a poorly-conditioned model is loaded (PointXP
+inferred an 8–29° polar error vs a true ~8' from TPPA), the forward transform
+returns nonsense that here lands near the pole.
+
+**Two interpretations remain open — unresolved this session:**
+
+- **(A) Measurement-only:** the model is fine and pointing improved, but CPWI's
+  ASCOM *position reporting* breaks once references are added, so only NINA's
+  error readout is wrong. Supports: the scope was visibly ~on target; the push
+  path uses solved coords, not the reported pose.
+- **(B) The model is genuinely bad:** the underdetermined/imbalanced fit is poor
+  (the implausible inferred polar error is a red flag) and the broken pose is a
+  symptom; pointing to a new target could be genuinely off. The "scope looked
+  about right" observation weakly argues against this but is not conclusive.
+
+> Design consequence (holds under either interpretation): pointing-quality must be
+> judged by comparing **plate-solved coordinates to the intended target**, never to
+> `telescopeMediator.GetCurrentPosition()` on CPWI. Independently, the
+> plugin's `GetCurrentLocation` ("add current position") path *reads* the reported
+> pose and would therefore be unreliable on CPWI after calibration — flagged for
+> the GEM work. The plate-solve push path is unaffected (it uses solved coords).
+
+## Next-session protocol (clean Phase-2 measurement)
+
+1. Polar align to a few arc-minutes (TPPA).
+2. Re-confirm mount home/index; clear the pointing model.
+3. Push a balanced grid: both pier sides, Dec spread ~+20° to +60°, ≥8 points
+   (more is better for separating polar from other model terms).
+4. Measure pointing the correct way: slew to fresh, untouched stars **inside the
+   cal-point envelope**, and compare each plate-solved position to the
+   **intended target** coordinates (or use a SlewAndCenter workflow). Do not read
+   the mount-reported "Error distance".
+5. Baseline to beat: the ~1° pre-alignment pointing seen at session start.
+
+## Open investigation — the "reported pose reverts to home" behavior
+
+The central unknown: after cal points are pushed, the mount's ASCOM-reported
+position stops tracking and returns the **home position**. Refining what we know:
+
+- **It is the home position, not merely "near the pole".** The stuck readout was
+  Alt = SiteLatitude (39.23°), Az = 0.000°, Dec ≈ 89.98° — the exact signature of
+  a GEM parked at home (counterweight down, optical axis parallel to the polar
+  axis, pointing at the NCP). CPWI appears to report *home*, not a corrupted sky
+  position.
+- **A failed `AddAlignmentReference` call does NOT trigger it.** The diagnostic's
+  invalid-payload probe (which throws) ran before the baseline solve, yet the
+  baseline pose was still accurate (1° at Dec +34°). So it is not "any call flips a
+  state flag" — it correlates specifically with *successfully adding cal points /
+  having a live model*.
+- **PointXP's own fit was good (RMS ~56").** The model is not mathematically
+  degenerate, which weakens the "model is garbage" reading and points instead at
+  the **alignment-state machine or the ASCOM reporting layer**.
+
+### Leading hypotheses
+
+1. **Uncommitted / in-progress alignment (strongest).** CPWI's normal flow is
+   begin → add references → *finalize*. `AddAlignmentReference` may leave CPWI in
+   "alignment in progress," reporting the home/reference pose until the model is
+   committed — and we never commit, because no finalize action is exposed
+   (`SupportedActions` lists *only* `Telescope:AddAlignmentReference`).
+2. **ASCOM reporting-layer bug.** Once a model exists, the driver returns the
+   home pose over `RightAscension`/`Declination` even though CPWI internally points
+   correctly (consistent with the scope being visibly on target while ASCOM said
+   "home").
+3. **Coordinate-source switch on first reference** — driver stops dead-reckoning
+   from encoders and reports through a path that defaults to home until "aligned".
+
+### Discriminating test (free, do first)
+
+After pushing a point, **compare CPWI's own on-screen RA/Dec readout to NINA's**:
+
+- CPWI correct, NINA = home → **ASCOM driver reporting bug** (hypothesis 2);
+  model/pointing fine (interpretation A). Stop here — no deeper trace needed.
+- CPWI *also* = home → bug is upstream of the driver (hypothesis 1/3); proceed to
+  the ASCOM trace below.
+
+Plus two cheap probes: push **exactly one** reference and check the pose
+immediately (does a single point break it, or only an accumulated model?); and
+after it is stuck, do a **Sync or fresh GoTo** (if that recovers the pose, that
+strongly implicates the uncommitted-alignment theory).
+
+### ASCOM-layer debugging (if the bug is at/below the driver)
+
+Instrument the three layers independently — what NINA receives, what the driver
+returns, what CPWI internally holds:
+
+1. **ASCOM driver trace log.** In the CPWI telescope driver's Setup dialog
+   (ASCOM chooser → Properties), enable **Trace/Logging**. It writes every
+   property read/write to a timestamped file under `Documents\ASCOM\Logs\` (or
+   `%LOCALAPPDATA%\ASCOM\Logs\`). Push one reference, then have NINA poll RA/Dec;
+   the trace shows exactly what `get_RightAscension`/`get_Declination` returned and
+   when it changed — i.e. whether the *driver* invented "home" or CPWI fed it.
+2. **ASCOM Device Hub** as a live spy. Connect NINA to `ASCOM.DeviceHub.Telescope`,
+   and Device Hub to the CPWI driver. Watch property values update in real time and
+   invoke `Action("Telescope:AddAlignmentReference", …)` in isolation to see its
+   effect on the reported pose without the plugin in the loop.
+3. **CPWI application log** (typically under `%LOCALAPPDATA%\Celestron\CPWI\`). If
+   the driver trace shows CPWI sending wrong values *into* the driver, the CPWI log
+   may reveal what the alignment subsystem did at the moment of the push.
+4. **ASCOM Conform Tool** — validates the driver against the ITelescope spec;
+   reserve for confirming broader spec violations if position-reporting isn't the
+   only thing affected.
+
+**Minimal decisive run:** enable driver Trace → reconnect from NINA → record
+NINA RA/Dec and CPWI's UI → push **one** reference via the plugin → re-record both
+→ collect the screenshots and the timestamped trace file. That isolates the layer
+the bug lives in, and hence whether the fix is a CPWI bug report, a driver
+workaround, or a plugin-level mitigation (e.g. a commit/finalize step, or never
+relying on reported pose).
+
+### Sync vs AddAlignmentReference — a likely missing piece
+
+ASCOM exposes two distinct pointing *writes*, and the plugin only ever uses one:
+
+- **`SyncToCoordinates(ra, dec)`** — "you are currently pointing here; correct your
+  reported position to match." No movement; a single anchor that snaps the mount's
+  reported RA/Dec to truth. This is the standard NINA plate-solve **"sync to mount"**
+  operation (`telescopeMediator.Sync(...)`).
+- **`Action("Telescope:AddAlignmentReference", "ra:dec")`** — CPWI-custom; the only
+  custom action in `SupportedActions`. Session evidence: it contributes a point to
+  the **PointXP model**. It does **not** appear to refresh the simple reported-
+  position anchor.
+
+The plugin pushes via `AddAlignmentReference` in all three paths
+(`SolveDirectToMount`, `GetCurrentLocation`, `CreateModelPoint`) and **never calls
+`Sync`**. That asymmetry lines up with the stuck-pose behavior: the standard NINA
+slew-and-center-with-sync workflow keeps reported position healthy precisely
+because it Syncs, and **this bug does not surface there — only on the plugin's
+sync-less path.** Plausibly, once a model exists CPWI reports position *through*
+that model but, lacking any Sync anchor, has nothing pinning it to truth and falls
+back to the home reference.
+
+**Candidate plugin mitigation:** Sync **and** add a reference on each push — call
+`telescopeMediator.Sync(solvedCoordinates)` *then*
+`Action("Telescope:AddAlignmentReference", ...)`. The two are complementary: Sync
+keeps NINA-side position reporting alive; `AddAlignmentReference` builds the long-
+term PointXP model. (This is a behavior change to base push code — gate it on the
+test below before implementing.)
+
+**Test (decisive):** after the stuck pose appears, plate-solve the current
+position and issue an ASCOM **Sync** to the solved coordinates (NINA
+slew-and-center with sync, or Device Hub manually), then re-read the pose.
+
+- Pose **recovers** → diagnosis *and* fix found: the plugin must Sync alongside
+  every `AddAlignmentReference`.
+- Pose **stays stuck** → CPWI is ignoring Sync once `AddAlignmentReference` has run;
+  the problem is deeper (go to the trace log).
