@@ -56,6 +56,7 @@ namespace AddToAlignmentModel.Tests.TestHelpers {
             Camera.Setup(c => c.GetInfo()).Returns(new CameraInfo { Connected = cameraConnected });
             Telescope.Setup(t => t.SlewToCoordinatesAsync(It.IsAny<Coordinates>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
             Telescope.Setup(t => t.Action(It.IsAny<string>(), It.IsAny<string>())).Returns(string.Empty);
+            Telescope.Setup(t => t.Sync(It.IsAny<Coordinates>())).ReturnsAsync(true);
             Telescope.Setup(t => t.GetCurrentPosition()).Returns(new Coordinates(10.0, 20.0, Epoch.J2000, Coordinates.RAType.Degrees));
             WindowServiceFactory.Setup(w => w.Create()).Returns(WindowService.Object);
             ProfileService.Setup(p => p.ActiveProfile).Returns(Profile.Object);

@@ -75,6 +75,14 @@ namespace ADPUK.NINA.AddToAlignmentModel {
                     // every reference point is offset by ~0.4 deg of precession.
                     Coordinates resultCoordinates = result.Coordinates.Transform(Epoch.JNOW);
                     telescopeMediator.Action("Telescope:AddAlignmentReference", $"{resultCoordinates.RA}:{resultCoordinates.Dec}");
+                    // Refresh the driver's reported RA/Dec to match the pushed point.
+                    // The CPWI ASCOM driver does not propagate CPWI-UI-initiated motion
+                    // into its position properties, so without this Sync, NINA's
+                    // GetCurrentPosition() stays stale whenever the user navigates
+                    // between pushes via CPWI's UI. Sync and AddAlignmentReference are
+                    // complementary: Action feeds CPWI's PointXP model; Sync refreshes
+                    // the reporting layer. See docs/avx_cpwi_eq_mode_findings.md.
+                    await telescopeMediator.Sync(resultCoordinates);
                 }
 
                 return result;
@@ -103,6 +111,9 @@ namespace ADPUK.NINA.AddToAlignmentModel {
             } else {
                 Coordinates resultCoordinates = result.Coordinates.Transform(Epoch.JNOW);
                 string addAlignmentResponse = telescopeMediator.Action("Telescope:AddAlignmentReference", $"{resultCoordinates.RA}:{resultCoordinates.Dec}");
+                // Sync refreshes the driver's reported position to match the pushed
+                // point - see docs/avx_cpwi_eq_mode_findings.md and SolveDirectToMount.
+                await telescopeMediator.Sync(resultCoordinates);
                 return  new ModelPoint(currentPostion , result);
             }
         }
@@ -133,6 +144,10 @@ namespace ADPUK.NINA.AddToAlignmentModel {
                         } else {
                             Coordinates resultCoordinates = result.Coordinates.Transform(Epoch.JNOW);
                             string addAlignmentResponse = telescopeMediator.Action("Telescope:AddAlignmentReference", $"{resultCoordinates.RA}:{resultCoordinates.Dec}");
+                            // Sync refreshes the driver's reported position to match the
+                            // pushed point - see docs/avx_cpwi_eq_mode_findings.md and
+                            // SolveDirectToMount.
+                            await telescopeMediator.Sync(resultCoordinates);
                             modelPoint = new ModelPoint(creationParameters.TargetCoordinatesAltAz, result);
                             return modelPoint;
                         }
