@@ -5,6 +5,7 @@ using NINA.Astrometry;
 using NINA.Core.Locale;
 using NINA.Core.Model;
 using NINA.Core.Model.Equipment;
+using NINA.Core.Utility;
 using NINA.Core.Utility.Notification;
 using NINA.Core.Utility.WindowService;
 using NINA.Equipment.Interfaces.Mediator;
@@ -81,8 +82,9 @@ namespace ADPUK.NINA.AddToAlignmentModel {
                     // GetCurrentPosition() stays stale whenever the user navigates
                     // between pushes via CPWI's UI. Sync and AddAlignmentReference are
                     // complementary: Action feeds CPWI's PointXP model; Sync refreshes
-                    // the reporting layer. See docs/avx_cpwi_eq_mode_findings.md.
-                    await telescopeMediator.Sync(resultCoordinates);
+                    // the reporting layer. Best-effort - never aborts the push.
+                    // See docs/avx_cpwi_eq_mode_findings.md.
+                    await TrySync(resultCoordinates);
                 }
 
                 return result;
@@ -112,8 +114,9 @@ namespace ADPUK.NINA.AddToAlignmentModel {
                 Coordinates resultCoordinates = result.Coordinates.Transform(Epoch.JNOW);
                 string addAlignmentResponse = telescopeMediator.Action("Telescope:AddAlignmentReference", $"{resultCoordinates.RA}:{resultCoordinates.Dec}");
                 // Sync refreshes the driver's reported position to match the pushed
-                // point - see docs/avx_cpwi_eq_mode_findings.md and SolveDirectToMount.
-                await telescopeMediator.Sync(resultCoordinates);
+                // point. Best-effort - never aborts the push. See
+                // docs/avx_cpwi_eq_mode_findings.md and SolveDirectToMount.
+                await TrySync(resultCoordinates);
                 return  new ModelPoint(currentPostion , result);
             }
         }
@@ -145,9 +148,9 @@ namespace ADPUK.NINA.AddToAlignmentModel {
                             Coordinates resultCoordinates = result.Coordinates.Transform(Epoch.JNOW);
                             string addAlignmentResponse = telescopeMediator.Action("Telescope:AddAlignmentReference", $"{resultCoordinates.RA}:{resultCoordinates.Dec}");
                             // Sync refreshes the driver's reported position to match the
-                            // pushed point - see docs/avx_cpwi_eq_mode_findings.md and
-                            // SolveDirectToMount.
-                            await telescopeMediator.Sync(resultCoordinates);
+                            // pushed point. Best-effort - never aborts the push. See
+                            // docs/avx_cpwi_eq_mode_findings.md and SolveDirectToMount.
+                            await TrySync(resultCoordinates);
                             modelPoint = new ModelPoint(creationParameters.TargetCoordinatesAltAz, result);
                             return modelPoint;
                         }
@@ -168,6 +171,19 @@ namespace ADPUK.NINA.AddToAlignmentModel {
             }
         }
 
+
+        // Best-effort Sync after an AddAlignmentReference push. The push has
+        // already succeeded by the time we get here; Sync is only refreshing the
+        // ASCOM-reported position (see docs/avx_cpwi_eq_mode_findings.md). A Sync
+        // failure (e.g. CPWI's documented sync-timeout flakiness) must not abort
+        // the point - the reference is in the model regardless. Swallow and log.
+        private async Task TrySync(Coordinates jnowCoordinates) {
+            try {
+                await telescopeMediator.Sync(jnowCoordinates);
+            } catch (Exception ex) {
+                Logger.Warning($"Sync after AddAlignmentReference failed (push still succeeded): {ex.GetType().Name}: {ex.Message}");
+            }
+        }
 
         public virtual async Task<PlateSolveResult> DoSolve(IProgress<ApplicationStatus> progress, int solveAttempts, CancellationToken token) {
             IPlateSolver plateSolver = plateSolverFactory.GetPlateSolver(profileService.ActiveProfile.PlateSolveSettings);

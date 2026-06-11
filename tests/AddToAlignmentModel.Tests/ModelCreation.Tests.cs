@@ -133,6 +133,27 @@ namespace AddToAlignmentModel.Tests {
             Assert.Equal(jnow.Dec, synced.Dec, 3);
         }
 
+        [Fact]
+        public async Task SolveDirectToMount_SyncFailure_DoesNotAbortThePush() {
+            // The push has already succeeded by the time we Sync; a Sync failure
+            // (CPWI's sync-timeout flakiness is a documented community report) must
+            // not roll back or mask the successful AddAlignmentReference.
+            ModelPointCreatorHarness harness = new ModelPointCreatorHarness();
+            harness.Telescope
+                .Setup(t => t.Sync(It.IsAny<Coordinates>()))
+                .ThrowsAsync(new InvalidOperationException("simulated sync failure"));
+            ModelPointCreator creator = harness.Create(Solved());
+
+            PlateSolveResult result = await creator.SolveDirectToMount(
+                1, 0, new Progress<ApplicationStatus>(), CancellationToken.None, showDialog: true);
+
+            // Push succeeded.
+            Assert.True(result.Success);
+            harness.Telescope.Verify(t => t.Action(AddReferenceAction, It.IsAny<string>()), Times.Once);
+            // Sync was attempted (and threw - swallowed by TrySync).
+            harness.Telescope.Verify(t => t.Sync(It.IsAny<Coordinates>()), Times.Once);
+        }
+
         // ---- CreateModelPoint --------------------------------------------------
 
         [Fact]
