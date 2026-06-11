@@ -69,6 +69,9 @@ namespace AddToAlignmentModel.Tests {
 
             Assert.True(result.Success);
             harness.Telescope.Verify(t => t.Action(AddReferenceAction, It.IsAny<string>()), Times.Once);
+            // Sync refreshes the driver's reported position alongside every push;
+            // see docs/avx_cpwi_eq_mode_findings.md.
+            harness.Telescope.Verify(t => t.Sync(It.IsAny<Coordinates>()), Times.Once);
         }
 
         [Fact]
@@ -81,14 +84,17 @@ namespace AddToAlignmentModel.Tests {
 
             Assert.False(result.Success);
             harness.Telescope.Verify(t => t.Action(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+            // Sync is part of the push; on failure there is nothing to push and
+            // nothing to Sync to.
+            harness.Telescope.Verify(t => t.Sync(It.IsAny<Coordinates>()), Times.Never);
         }
 
         [Fact]
         public async Task SolveDirectToMount_PushesJNowTransformedCoordinates() {
             // The mount's alignment model is in its native epoch (JNOW on CPWI);
-            // plate solves return J2000. The pushed payload must be the JNOW-
-            // transformed coordinates, not the raw J2000 result (the bug that put
-            // every reference point ~0.4 deg off).
+            // plate solves return J2000. The pushed payload AND the Sync payload
+            // must both be the JNOW-transformed coordinates, not the raw J2000
+            // result (the bug that put every reference point ~0.4 deg off).
             Coordinates j2000 = new Coordinates(Angle.ByHours(6.0), Angle.ByDegree(45.0), Epoch.J2000);
             PlateSolveResult result = new PlateSolveResult { Success = true, Coordinates = j2000 };
 
@@ -98,6 +104,11 @@ namespace AddToAlignmentModel.Tests {
                 .Setup(t => t.Action("Telescope:AddAlignmentReference", It.IsAny<string>()))
                 .Callback<string, string>((_, p) => payload = p)
                 .Returns(string.Empty);
+            Coordinates synced = null;
+            harness.Telescope
+                .Setup(t => t.Sync(It.IsAny<Coordinates>()))
+                .Callback<Coordinates>(c => synced = c)
+                .ReturnsAsync(true);
             ModelPointCreator creator = harness.Create(result);
 
             await creator.SolveDirectToMount(1, 0, new Progress<ApplicationStatus>(), CancellationToken.None, showDialog: true);
@@ -113,6 +124,34 @@ namespace AddToAlignmentModel.Tests {
             Assert.Equal(jnow.Dec, pushedDec, 3);
             // ...and are meaningfully shifted from the raw J2000 RA (precession is real).
             Assert.True(System.Math.Abs(pushedRa - j2000.RA) > 0.0001);
+
+            // Sync received the same JNOW-transformed Coordinates - the reporting-
+            // layer refresh has to match the model contribution, or NINA's view of
+            // the mount diverges from CPWI's alignment model.
+            Assert.NotNull(synced);
+            Assert.Equal(jnow.RA, synced.RA, 3);
+            Assert.Equal(jnow.Dec, synced.Dec, 3);
+        }
+
+        [Fact]
+        public async Task SolveDirectToMount_SyncFailure_DoesNotAbortThePush() {
+            // The push has already succeeded by the time we Sync; a Sync failure
+            // (CPWI's sync-timeout flakiness is a documented community report) must
+            // not roll back or mask the successful AddAlignmentReference.
+            ModelPointCreatorHarness harness = new ModelPointCreatorHarness();
+            harness.Telescope
+                .Setup(t => t.Sync(It.IsAny<Coordinates>()))
+                .ThrowsAsync(new InvalidOperationException("simulated sync failure"));
+            ModelPointCreator creator = harness.Create(Solved());
+
+            PlateSolveResult result = await creator.SolveDirectToMount(
+                1, 0, new Progress<ApplicationStatus>(), CancellationToken.None, showDialog: true);
+
+            // Push succeeded.
+            Assert.True(result.Success);
+            harness.Telescope.Verify(t => t.Action(AddReferenceAction, It.IsAny<string>()), Times.Once);
+            // Sync was attempted (and threw - swallowed by TrySync).
+            harness.Telescope.Verify(t => t.Sync(It.IsAny<Coordinates>()), Times.Once);
         }
 
         // ---- CreateModelPoint --------------------------------------------------
@@ -128,6 +167,7 @@ namespace AddToAlignmentModel.Tests {
 
             harness.Telescope.Verify(t => t.SlewToCoordinatesAsync(It.IsAny<Coordinates>(), It.IsAny<CancellationToken>()), Times.Once);
             harness.Telescope.Verify(t => t.Action(AddReferenceAction, It.IsAny<string>()), Times.Once);
+            harness.Telescope.Verify(t => t.Sync(It.IsAny<Coordinates>()), Times.Once);
             Assert.NotEqual(ViewStrings.PlateSolveFailed, point.ActualRAString);
         }
 
@@ -142,6 +182,7 @@ namespace AddToAlignmentModel.Tests {
 
             Assert.Equal(ViewStrings.PlateSolveFailed, point.ActualRAString);
             harness.Telescope.Verify(t => t.Action(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+            harness.Telescope.Verify(t => t.Sync(It.IsAny<Coordinates>()), Times.Never);
         }
 
         [Fact]
@@ -161,6 +202,7 @@ namespace AddToAlignmentModel.Tests {
             Assert.Equal(ViewStrings.TargetBelowHorizon, point.ActualRAString);
             harness.Telescope.Verify(t => t.SlewToCoordinatesAsync(It.IsAny<Coordinates>(), It.IsAny<CancellationToken>()), Times.Never);
             harness.Telescope.Verify(t => t.Action(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+            harness.Telescope.Verify(t => t.Sync(It.IsAny<Coordinates>()), Times.Never);
         }
 
         // ---- GetCurrentLocation ------------------------------------------------
@@ -175,6 +217,7 @@ namespace AddToAlignmentModel.Tests {
 
             harness.Telescope.Verify(t => t.GetCurrentPosition(), Times.Once);
             harness.Telescope.Verify(t => t.Action(AddReferenceAction, It.IsAny<string>()), Times.Once);
+            harness.Telescope.Verify(t => t.Sync(It.IsAny<Coordinates>()), Times.Once);
             Assert.NotEqual(ViewStrings.PlateSolveFailed, point.ActualRAString);
         }
     }
