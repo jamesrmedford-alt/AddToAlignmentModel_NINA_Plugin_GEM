@@ -220,10 +220,30 @@ turns on.
 
 ### Smoking-gun log evidence
 
-Across **fourteen minutes** of test plate-solves (23:02–23:16), every single
-solve used **identical** "Reference Coordinates" — the near-pole value from
-much earlier in the session — while the *plate-solved* (actual) positions
-ranged across most of the visible sky:
+Two independent windows in the log show the same thing. The build-phase
+evidence is the stronger of the two — it predates any Park, so it can't be
+attributed to post-Park state corruption — and is shown first.
+
+**Build phase (22:19–22:31), no Park in the window:**
+
+| Time     | Reference Coords (mount-reported) | Plate-solved (actual)        |
+|----------|-----------------------------------|------------------------------|
+| 22:19:04 | RA 09:43:43 / Dec +34°11'21"      | RA 11:21:38 / Dec +19°53'    |
+| 22:19:53 | RA 09:43:43 / Dec +34°11'21"      | RA 11:21:37 / Dec +19°54'    |
+| 22:20:57 | RA 11:41:53 / Dec +19°54'16"      | RA 11:21:36 / Dec +19°54'    |
+| 22:22:06 | RA 11:41:53 / Dec +19°54'16"      | RA 10:33:03 / Dec +11°42'    |
+| 22:23:10 | RA 11:41:53 / Dec +19°54'16"      | RA 08:56:13 / Dec +18°08'    |
+| 22:28:28 | RA 11:41:53 / Dec +19°54'16"      | RA 19:27:01 / Dec +36°23'    |
+| 22:30:38 | RA 11:41:53 / Dec +19°54'16"      | RA 19:27:04 / Dec +36°24'    |
+
+The reference coordinates froze at `RA 11:41:53 / Dec +19°54'16"` from 22:20 to
+22:30 — across six successful solves whose actual positions ranged from RA
+08:56 to RA 19:27 (over half the sky, including a meridian crossing). Only
+ASCOM-initiated motion changed the reference: the 22:19→22:20 transition is the
+22:20:12 `Sync`; the subsequent frozen reference is what CPWI-UI navigation
+between solves looked like.
+
+**Test phase (23:02–23:16), after TPPA + Park:**
 
 | Time     | Reference Coords (mount-reported) | Plate-solved (actual)         |
 |----------|-----------------------------------|-------------------------------|
@@ -234,10 +254,18 @@ ranged across most of the visible sky:
 | 23:10:22 | RA 00:38:14 / Dec +89°51'41"      | RA 10:50:05 / Dec +20°58'     |
 | 23:14:55 | RA 00:38:14 / Dec +89°51'41"      | RA 11:31:57 / Dec +05°48' ← W test |
 
-The mount was demonstrably slewing to eight different sky positions via CPWI's
-UI, and NINA's view of the mount's RA/Dec did not move at all. That is not
-latency; that is **the ASCOM-reported position not reflecting CPWI-UI motion
-at all.**
+In each window, the mount was demonstrably slewing to many different sky
+positions via CPWI's UI, and NINA's view of the mount's RA/Dec did not move.
+That is not latency; that is **the ASCOM-reported position not reflecting
+CPWI-UI motion at all.**
+
+**Independent corroborating signal: `SideOfPier` *does* update live.** Between
+the two read-only `Dump Telescope Capabilities` runs in Session 3 (six minutes
+apart, RA/Dec frozen at the same stale value), `SideOfPier` flipped from
+`pierWest` to `pierEast` — i.e. the property changed even while the
+position properties did not. That cleanly isolates the bug to the position
+read path and is also why the pier-side logic in PR #6 can be trusted to use
+the live driver value.
 
 ### The actual bug
 
@@ -261,33 +289,44 @@ That accounts for everything we saw:
 
 ### External corroboration
 
-Forum reports describe related CPWI/ASCOM behaviors that are consistent with
-(and reinforce) what the logs show, even though none is a clean line-for-line
-match of "CPWI-UI motion is invisible to ASCOM":
+An adversarial review of this section found that **no independent published
+report of this specific CPWI-UI → ASCOM propagation gap was located** — the
+relevant Cloudy Nights, SharpCap, and APT forum pages return HTTP 403 to
+automated fetches, and web-search snippets surface only *adjacent* CPWI/ASCOM
+issues, not the exact bug we observed. The log evidence above stands on its
+own; the items below are the most relevant adjacent reports plus the primary
+spec citations that ground the design.
 
-- *"CPWI once it creates the initial alignment model, it will not accept Sync
-  information to improve the initial alignment model."* — community report
-  surfaced via the [Cloudy Nights CPWI threads](https://www.cloudynights.com/forums/topic/972801-cpwi-ascom-driver-problems/).
-  Critically, this is consistent with the logs: ASCOM `Sync` still updated
-  *the reported position* (the 22:20:12 and 23:22:34 syncs both took), but it
-  appears it does **not** feed CPWI's alignment model after the model exists —
-  which is the right division of labor for our purposes (`AddAlignmentReference`
-  is the channel for model contributions; `Sync` is the channel for reporting).
-- *"CPWI doesn't respond to manually slewing N or E, but does respond to W and
-  S when using other ASCOM apps."* — same community thread; a separate
-  direction-specific quirk, but evidence the driver has known fidelity issues
-  in propagating between CPWI and ASCOM clients.
-- NINA's own troubleshooting page notes ASCOM drivers sometimes [fail to
-  receive updates from CPWI](https://nighttime-imaging.eu/docs/master/site/troubleshooting/ascom_connection_issues/),
-  and recommends the ASCOM Device Hub as a workaround/bridge for reliability.
-- Independent reports of CPWI's ASCOM driver having sync timeout and other
-  state-propagation issues are catalogued across the [SharpCap CPWI sync
-  threads](https://forums.sharpcap.co.uk/viewtopic.php?t=6432) and
-  [APT/CPWI position threads](https://aptforum.com/phpbb/viewtopic.php?t=3929).
+- **Celestron's own release notes** acknowledge the
+  `Telescope:AddAlignmentReference` custom action exists — surfaced via web
+  search of CPWI release notes referencing
+  "Added ASCOM.Action(Telescope:AddAlignmentReference,ra:dec)". Establishes
+  that the custom-action channel is real and Celestron-blessed.
+- **[NexStar Communication Protocol](1154108406_nexstarcommprot.pdf)** (in
+  `docs/`) defines `Sync` (`S`/`s` serial commands) as the documented
+  single-anchor "you are pointing here" operation that future Get-Position
+  results are computed relative to. Not corroboration of the bug; corroboration
+  that `Sync` is the correct mechanism for refreshing reported position once
+  it is stale.
+- **ASCOM `ITelescopeV3.SideOfPier` spec** defines `pierEast` as the *normal*
+  pointing state (mount on east side of pier, OTA pointing west, target
+  west of meridian) and `pierWest` as the *through-the-pole* state (target
+  east of meridian). The mapping we observed on CPWI matches this exactly, so
+  any standards-compliant client can consume it directly. (ASCOM Help URL
+  cannot be fetched here; cited as the published spec.)
+- **Plausible adjacent CPWI/ASCOM issues** surfaced by general web search but
+  not directly verified in this session: reports of `Sync` timeouts on CPWI's
+  ASCOM driver, of `SyncToAltAz` not being implemented, of CPWI's mini-slew
+  window sometimes needing to be active for Stellarium slews to work. These
+  paint a coherent picture of a driver with known state-propagation flakiness
+  but none specifically demonstrates the CPWI-UI → ASCOM propagation gap.
 
-None of these is a published Celestron acknowledgement; they're a coherent body
-of user-observed CPWI/ASCOM behaviors that align with what the log evidence
-proves directly.
+Worth noting why this gap might be under-reported: the standard NINA + Celestron
+workflow has the user *align in CPWI first, then drive everything from NINA*.
+Under that pattern, all motion originates in ASCOM and the bug never surfaces.
+The mixed-driver workflow this plugin is designed for (CPWI UI for navigation +
+plugin for model contribution) appears to be unusual enough that the gap has
+not been catalogued.
 
 ### Design consequences
 
@@ -349,14 +388,39 @@ For each `SolveAddToAlignmentModel`:
 
 The two operations are *complementary*, not competing. `AddAlignmentReference`
 is the model-contribution channel (it's literally what the custom action exists
-for). `Sync` is the reported-position channel (forum reports suggest it no
-longer feeds CPWI's model once one exists, which is exactly what we want — no
-double-counting). Together they restore the invariant that NINA's
+for). `Sync` is the reported-position channel. The NexStar protocol documents
+`Sync` as "future GOTO or Get Position commands … use coordinates relative to
+the Sync'd position," not as a model contribution; so the two channels are
+expected to be independent. Together they restore the invariant that NINA's
 `GetCurrentPosition()` reflects reality after every push, even if the user
 slews between pushes via CPWI's UI.
 
-Cost: one extra ASCOM call per push (~milliseconds). No change to the model
-building behavior. No change to how the user navigates the scope.
+Cost: one extra ASCOM call per push (~milliseconds). No change to model-building
+behavior. No change to how the user navigates the scope.
+
+**Sync is implemented as best-effort.** Adversarial review of the syncs in the
+session log surfaced a caveat (see below) and broader community reports note
+CPWI's ASCOM driver can time out on `Sync`. A `Sync` failure must therefore
+*never* roll back or mask the successful `AddAlignmentReference` that preceded
+it — the reference is already in CPWI's model regardless. PR #11 wraps each
+sync call in `TrySync`, which logs and swallows exceptions.
+
+### Caveat from the session log: Sync's effect on reported RA is imprecise
+
+A second careful pass over the session log surfaced a subtlety worth recording.
+The Dec value before each subsequent sync matches the previous sync's target
+exactly, suggesting CPWI honors `Sync` precisely in Dec. RA does not behave as
+cleanly: across the four `Syncing scope from … to …` events in the log, the
+RA delta between consecutive syncs is inconsistent with simple sidereal
+advancement of the prior target (one interval shows nearly no advancement in
+23 minutes; another shows ~2 minutes of excess advancement in 18 minutes).
+Without ASCOM driver trace logging we can't tell whether this reflects how
+CPWI tracks RA internally, the operator nudging in CPWI, or a quirk of which
+value gets reported in the `from` field. **The practical implication is that
+Sync-per-push restores reported pose approximately, not precisely — much
+better than frozen-at-home, but the next-session protocol should read back
+RA/Dec immediately after a Sync and compare to the synced values to
+characterize this.**
 
 ### Remaining open questions (to settle next session, before merging the code change)
 
@@ -369,12 +433,14 @@ collecting before locking it in:
    the driver-doesn't-propagate-CPWI-UI-motion conclusion is confirmed directly,
    not just inferred from the log. If NINA's view does update, then the
    propagation works in some cases and we need to characterize when.
-2. **Sync recovers a stuck pose** — when the pose is observed stale, issue an
-   ASCOM `Sync` to known coordinates (NINA's "Slew and Center with sync," or
-   Device Hub manually), and confirm the reported pose updates. The 23:22:34
-   Sync in the b66ad4b1 log already shows this works in principle (it updated
-   from a Dec +89°58' "from" to the user-supplied target), but a deliberate
-   isolated test makes it unambiguous.
+2. **Sync recovers a stuck pose, and how precisely** — when the pose is
+   observed stale, issue an ASCOM `Sync` to known coordinates (NINA's "Slew
+   and Center with sync," or Device Hub manually), then **immediately read back
+   `RightAscension` / `Declination` and compare to the synced values**. The
+   23:22:34 Sync in the b66ad4b1 log shows the call being *issued*, but the
+   log doesn't include a post-sync read-back, so we don't know if or how
+   precisely it actually updated the reported pose — that's what this test
+   isolates. Pair with the RA caveat noted above.
 
 If both confirm, the Sync-per-push change is unambiguously the right fix and
 ready to implement. If either surprises us, the deeper ASCOM tracing path below
