@@ -1,5 +1,6 @@
 ﻿# Add To Alignment Model for CPWI Alt-Az Mounts
-This plug-in can be used to create, or add to, an alignment model for users of CPWI controlled Alt-Az mounts.
+This plugin can be used to create, or add to, an alignment model for users of CPWI controlled Alt-Az mounts. A couple of users
+have now reported back that they have had success with EQ mounts.
 
 ## Why?
 The plugin came about due to eye health challenges making it very difficult to use the red dot finder to pick alignment
@@ -19,7 +20,17 @@ cordinates and an image obtained and plate solved to obtain the actual RA/Dec wh
 I also include sequencer actions to plate solve an image and update the alignment model. Potentially these could be called from a trigger but I have not yet had time to create a dedicated trigger.
 
 The plugin has been developed and tested using CPWI with a Celestron Astro-Fi 6 mount and scope. It is beleived it will 
-work with other CPWI controlled Alt Azimuth mounts but it cannot be guranteed.
+work with other CPWI controlled Alt Azimuth mounts and there is some evidence of it working with Equatorial mounts but it cannot be gauranteed.
 
 ## Bug Reporting
 Please raise an issue in repository with as much information as possibe.
+
+## Acknowledgements
+Acknowledgements to the N.I.N.A. team for their work on the N.I.N.A. software and the plugin framework that this plugin is built on.
+Acknowledgements to all the various plugin developers who have provided examples and inspiration for this plugin.
+
+## Disclaimers
+This plugin was developed by Dale Page, ADPUK, and is not affiliated with Celestron or PlaneWave Instruments. Celestron PWI (CPWI) was co-developed by PlaneWave Instruments and Celestron.
+Please check the CPWI support page for any changes or updates to the CPWI software.
+
+This plugin is provided as-is and the author makes no guarantees about its functionality or compatibility with any specific hardware or software configurations. Use at your own risk.
