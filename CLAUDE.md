@@ -139,6 +139,11 @@ yet.
 4. The `Telescope:AddAlignmentReference` action — undocumented by Celestron;
    unverified in EQ mode. Hardware verification (via the diagnostic sequence item)
    is the gating prerequisite for all of the above.
+5. A third mount class exists: **Alt-Az on an equatorial wedge**, which CPWI
+   treats separately (no meridian flip, wedge home pose) and which ASCOM reports
+   as `AlignmentMode = Polar` (fork), not `GermanPolar`. Every branch on mount
+   mode (#1–#3) must handle `Polar` explicitly: equatorial coordinates, no pier
+   partitioning. See `docs/avx_cpwi_eq_mode_findings.md`, "CPWI manual cross-check".
 
 ## Conventions
 
@@ -148,6 +153,11 @@ yet.
   view-model patterns (`[ImportingConstructor]`, `Clone(this)` copy pattern,
   resource strings in `.resx`).
 - Keep commits small and messages descriptive of *why*, not just *what*.
+- **Upstream sync:** the maintainer releases from the `next-version` branch
+  (tags `0.9.0.x` live there), not from `main`, which only receives README
+  edits. When pulling upstream changes, fetch both `upstream/main` and
+  `upstream/next-version` and merge both; check the `0.9.0.x` tags to see what
+  was actually released.
 
 ## Things NOT to do
 
