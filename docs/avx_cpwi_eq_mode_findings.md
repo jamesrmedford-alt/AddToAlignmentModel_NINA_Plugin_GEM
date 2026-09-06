@@ -66,16 +66,31 @@ CPWI returned a clean, deterministic mapping:
 | +6.0 h     | West             | `pierEast`                   |
 
 Key points:
-- The mapping is **deterministic** and follows the standard ASCOM GEM convention:
+- The mapping is **deterministic** and matches the conventional GEM result:
   **east of the meridian (HA < 0) → `pierWest`; west (HA ≥ 0) → `pierEast`**, with
-  the flip at the meridian (HA = 0).
+  the flip observed at the meridian (HA = 0) *under this mount's current CPWI
+  settings*.
 - It is **computed geometrically** — it worked while the mount was uninitialized,
   so it is usable for *planning* a grid before the mount is aligned.
 - The driver's prediction **agrees exactly with the hour-angle sign**, giving two
   consistent sources of pier side: `DestinationSideOfPier(target)` (authoritative)
-  and `HA = LST − RA` (driver-independent fallback).
+  and `HA = LST − RA` (driver-independent approximation).
 - `CanSetPierSide = False`: we cannot *command* a side, but we don't need to — the
   mount auto-flips and `DestinationSideOfPier` tells us where it will land.
+
+**Caveat (added after checking the ASCOM spec source and the CPWI manual):**
+the "flip at HA = 0" rule is a convention, not a guarantee. ASCOM defines
+`SideOfPier` by the *mechanical declination-axis position* (`pierEast` when
+|mechanical Dec| ≤ 90°), explicitly says pier side "is, in general, not a
+useful term" as a function of sky position, and defines `DestinationSideOfPier`
+as time-dependent precisely because mounts flip at mount-specific offsets.
+CPWI makes that offset user-configurable: **RA Slewlimits** (up to −20° past /
++40° before the meridian) and **Meridian Sweep** (Favor East / Favor West /
+Favor Current, with an "Angle" past the meridian) both change where the flip
+happens and which side a near-meridian target lands on. So `DestinationSideOfPier`
+is the only safe source; the HA-sign fallback is right only for default
+settings and should be treated as a display hint, never as the partitioning
+rule. This has not yet been tested with Meridian Sweep enabled.
 
 > Maps to CLAUDE.md GEM finding #3. This is the basis for partitioning the
 > alignment grid by pier side so the mount makes a single deliberate meridian flip.
@@ -184,6 +199,11 @@ mitigation falls out of it: see "Deconflicting the mixed-driver workflow".
 3. **CPWI requires points on both pier sides.** A 3-east/1-west model fit its
    points but extrapolated wildly (tens of degrees) to the sparse side. A
    balanced 4-east/4-west set converged. The grid loop must populate both sides.
+   This is Celestron's documented design, not just an observation — the CPWI
+   manual (p. 15) states: *"For EQ mounts, if disabling an alignment reference
+   leaves less than two alignment references on one side of the meridian, the
+   Pointing Model Information box will recommend using another alignment
+   reference on that side of the meridian."* Minimum: ≥2 references per side.
 4. **The plate-solve push is robust to bad initial slews.** Early west-side
    slews (before that side was constrained) missed badly, but the solver still
    identified the true position and pushed correct coordinates, so each push
@@ -289,44 +309,93 @@ That accounts for everything we saw:
 
 ### External corroboration
 
-An adversarial review of this section found that **no independent published
-report of this specific CPWI-UI → ASCOM propagation gap was located** — the
-relevant Cloudy Nights, SharpCap, and APT forum pages return HTTP 403 to
-automated fetches, and web-search snippets surface only *adjacent* CPWI/ASCOM
-issues, not the exact bug we observed. The log evidence above stands on its
-own; the items below are the most relevant adjacent reports plus the primary
-spec citations that ground the design.
+A second, source-by-source web review was run against every claim in this
+document. Bottom line: **no independent published report of this specific
+CPWI-UI → ASCOM propagation gap was located**, so the log evidence above stands
+on its own. Everything *around* it, however, is now corroborated with
+identifiable sources. Caveat on all forum citations: Cloudy Nights, SharpCap
+and APT forums block automated page reads, so the quotes below come from
+search-engine snippets of those threads and should be spot-checked in a
+browser before being cited elsewhere.
 
-- **Celestron's own release notes** acknowledge the
-  `Telescope:AddAlignmentReference` custom action exists — surfaced via web
-  search of CPWI release notes referencing
-  "Added ASCOM.Action(Telescope:AddAlignmentReference,ra:dec)". Establishes
-  that the custom-action channel is real and Celestron-blessed.
+**Primary specifications (read directly):**
+
+- **ASCOM `ITelescopeV3` interface source** (the XML doc comments the published
+  Help pages are generated from — `ASCOMInitiative/ASCOMPlatform`,
+  `ASCOM.DeviceInterface/ITelescopeV3.cs`): `pierEast` is "the Normal pointing
+  state … German Equatorial mount is on the East side of the pier, looking
+  West"; `pierWest` is the "Beyond the pole" state; `DestinationSideOfPier`
+  returns "the side of the pier on which the telescope would be on if a slew to
+  the given equatorial coordinates is performed at the current instant of
+  time"; and `SyncToCoordinates` "should only be relied on to improve pointing
+  for positions close to the position at which the sync is done" — its
+  implementation is explicitly "mount dependent".
 - **[NexStar Communication Protocol](1154108406_nexstarcommprot.pdf)** (in
-  `docs/`) defines `Sync` (`S`/`s` serial commands) as the documented
-  single-anchor "you are pointing here" operation that future Get-Position
-  results are computed relative to. Not corroboration of the bug; corroboration
-  that `Sync` is the correct mechanism for refreshing reported position once
-  it is stale.
-- **ASCOM `ITelescopeV3.SideOfPier` spec** defines `pierEast` as the *normal*
-  pointing state (mount on east side of pier, OTA pointing west, target
-  west of meridian) and `pierWest` as the *through-the-pole* state (target
-  east of meridian). The mapping we observed on CPWI matches this exactly, so
-  any standards-compliant client can consume it directly. (ASCOM Help URL
-  cannot be fetched here; cited as the published spec.)
-- **Plausible adjacent CPWI/ASCOM issues** surfaced by general web search but
-  not directly verified in this session: reports of `Sync` timeouts on CPWI's
-  ASCOM driver, of `SyncToAltAz` not being implemented, of CPWI's mini-slew
-  window sometimes needing to be active for Stellarium slews to work. These
-  paint a coherent picture of a driver with known state-propagation flakiness
-  but none specifically demonstrates the CPWI-UI → ASCOM propagation gap.
+  `docs/`, p. 5): Sync "causes future GOTO or Get Position commands to use
+  coordinates relative to the Sync'd position, improving pointing accuracy to
+  nearby objects." Both specs describe Sync as a *local* anchor, which
+  independently predicts the RA-imprecision caveat below.
+- **CPWI Software Manual (June 2020)** — see the "CPWI manual cross-check"
+  section at the end of this document.
 
-Worth noting why this gap might be under-reported: the standard NINA + Celestron
-workflow has the user *align in CPWI first, then drive everything from NINA*.
-Under that pattern, all motion originates in ASCOM and the bug never surfaces.
-The mixed-driver workflow this plugin is designed for (CPWI UI for navigation +
-plugin for model contribution) appears to be unusual enough that the gap has
-not been catalogued.
+**Celestron release notes:** `Telescope:AddAlignmentReference` was introduced in
+**CPWI 2.3.5 (August 2020)** — "Added ASCOM.Action (Telescope:AddAlignmentReference,ra:dec)"
+— per the release notes republished by Celestron's UK distributor
+(dhinds.co.uk, "New version release of Celestron PWI software") and quoted in
+Cloudy Nights topic 727389 ("ASCOM console commands?", Dec 2020), which also
+notes that no documentation accompanied it. Search engines index Celestron's
+own release-notes page for the same string.
+
+**Community reports that corroborate the surrounding claims:**
+
+- **JNow payload.** SharpCap forum topic 2102 ("CPWI and SharpCap RA/Dec do
+  not match"): CPWI's ASCOM driver reports JNow "according to Celestron's
+  software developers" while **CPWI's own UI displays J2000** — a documented
+  source of "coordinates don't match" confusion, and the reason the plugin's
+  `Transform(Epoch.JNOW)` is required. Cloudy Nights topics 745029 and 868353
+  say the same, the latter specifically for the `AddAlignmentReference` argument.
+- **Sync timeouts.** SharpCap forum topic 4749: the ASCOM driver "asks the main
+  CPWI program to run the sync process and doesn't get a response — creating an
+  error after about 2 seconds"; a normal sync takes ~0.3 s but "sometimes takes
+  long enough to cause the ASCOM driver to time out". Characterised by
+  SharpCap's author as a bug in CPWI's sync implementation. This is the
+  justification for the best-effort `TrySync` in PR #11.
+- **`SyncToAltAz` not implemented.** Same thread quotes the literal driver
+  error "Method SyncToAltAz is not implemented in this driver".
+- **Sync does not modify an existing model.** SharpCap forum topic 8442:
+  "CPWI, once it creates the initial alignment model, will not accept Sync
+  information to improve the initial alignment model, whereas the older
+  Celestron ASCOM driver accepts Sync information". This is the upstream
+  author's original rationale for using the custom action instead of Sync.
+- **Mini-slew window for Stellarium.** Cloudy Nights topics 788742 / 678717:
+  "it is sometimes necessary to open and click (activate) the small mini slew
+  window in CPWI … for the slew function to work in Stellarium".
+- **Standard workflow.** theastronoob.com ("Celestron CPWI, ASCOM & NINA") and
+  Cloudy Nights topics 865683 / 711505 all describe: align in CPWI, then "you
+  don't use CPWI any more" — everything is driven from NINA through CPWI's
+  driver. Under that pattern all motion originates in ASCOM and the propagation
+  gap never surfaces, which is the most likely reason it is uncatalogued.
+
+**Nearest adjacent data points (neither confirms nor refutes the bug):**
+
+- SharpCap topic 2102 is weak *counter*-evidence: that user's CPWI-reported
+  coordinates were live and correct once epoch-converted. The thread does not
+  say whether any motion had originated from CPWI's UI after the ASCOM client
+  connected, so it does not contradict the log evidence.
+- Simulation Curriculum support post "Offset Created By CPWI": GoTo from
+  SkySafari lands offset from target while GoTo from CPWI's own map is correct
+  — CPWI handles externally- and internally-commanded motion through different
+  paths, loosely consistent with the "two worlds" model above.
+- Two recent Cloudy Nights threads, **972801 "CPWI ASCOM driver problems"** and
+  **972794 "CPWI ASCOM driver reporting incorrect pier-side"**, match this
+  project's findings closely and may be the fork owner's own posts. If they
+  are, they are first-party and not corroboration; if they are not, 972794
+  would be the first evidence *against* trusting live `SideOfPier` and must be
+  read before PR #6's partitioning logic is merged.
+
+**Not independently corroborated (first-party hardware log only):** the
+capability flags (`CanFindHome = False`, `CanSetPierSide = False`) and the
+propagation gap itself.
 
 ### Design consequences
 
@@ -337,6 +406,12 @@ not been catalogued.
 - The plugin's **`GetCurrentLocation` path (`telescopeMediator.GetCurrentPosition()`)
   is unreliable on CPWI** whenever the user has driven the scope from CPWI's
   UI. The plate-solve push paths are unaffected (they use solved coordinates).
+  Note that upstream 0.9.0.6 (now merged into the fork) passes the reported
+  position to the solver as the *near-solve hint* in `SolveAddToAlignmentModel`;
+  with a frozen pose that hint is wrong and the solver has to fall back to a
+  blind solve — which is why solves still succeeded in Session 2, only slower.
+  Upstream 0.9.0.6 also changed `ModelPoint.Separation` to a target-vs-actual
+  distance, which is exactly the measurement this section recommends.
 - The mixed-driver workflow the maintainer actually wants — **CPWI's UI for
   navigation + plugin for model contribution** — is otherwise fully supported,
   but it requires the plugin to compensate for the driver's missing CPWI-UI →
@@ -345,14 +420,27 @@ not been catalogued.
 
 ## Next-session protocol (clean Phase-2 measurement)
 
-1. Polar align to a few arc-minutes (TPPA).
-2. Re-confirm mount home/index; clear the pointing model.
-3. Push a balanced grid: both pier sides, Dec spread ~+20° to +60°, ≥8 points
-   (more is better for separating polar from other model terms).
+0. Record the CPWI configuration so results are reproducible: **alignment
+   method chosen at connect** (for EQ with no model this should be *Quick
+   Align*, which requires the index/home position and a polar-aligned mount),
+   and the state of **RA Slewlimits**, **Meridian Sweep** (mode + angle),
+   **RA + Dec Tracking**, and **GoTo Approach Direction** in Configure Mount.
+1. Polar align to a few arc-minutes (TPPA). **Any physical polar-axis
+   adjustment invalidates the model** (the manual's own ASPA procedure ends
+   with "re-align the mount"), so no plugin pushes may straddle this step.
+2. Set the RA/Dec index marks (the AVX has no home switches, so CPWI cannot
+   auto-home it; and note the default EQ *park* position — OTA east, pointing
+   down — is not the index position). Then **Delete Alignment** in CPWI and
+   **Quick Align** again — after a delete "a new alignment will need to be
+   performed or loaded" before CPWI will accept GoTos or references.
+3. Push a balanced grid: both pier sides, ≥2 references per side (CPWI's own
+   minimum), Dec spread ~+20° to +60°, ≥8 points total (more is better for
+   separating polar from other model terms; Celestron's StarSense guidance
+   says little benefit beyond ~10).
 4. Measure pointing the correct way: slew to fresh, untouched stars **inside the
    cal-point envelope**, and compare each plate-solved position to the
-   **intended target** coordinates (or use a SlewAndCenter workflow). Do not read
-   the mount-reported "Error distance".
+   **intended target** coordinates (or use a SlewAndCenter workflow, or the
+   0.9.0.6 `Separation` column). Do not read the mount-reported "Error distance".
 5. Baseline to beat: the ~1° pre-alignment pointing seen at session start.
 
 ## Deconflicting the mixed-driver workflow (CPWI UI + plugin)
@@ -371,9 +459,22 @@ and the ASCOM ITelescope spec, `Sync` is documented as a single-anchor
 operation that "centers a known object … and improves pointing accuracy" — i.e.
 it tells the mount "you are pointing here," and from then on the reported
 RA/Dec is computed relative to that anchor. The community report that *CPWI
-does not let `Sync` modify an existing alignment model* (see corroboration
-above) doesn't conflict with using it here: it still updates the
-reported-position layer, which is the layer we need to refresh.
+does not let `Sync` add to an existing alignment model* (SharpCap topic 8442,
+see corroboration above) doesn't conflict with using it here: it still updates
+the reported-position layer, which is the layer we need to refresh.
+
+**However, the CPWI manual suggests Sync is not *only* a reported-position
+refresh.** CPWI's own "Sync on Object" (manual p. 13, 15) is the step that
+makes a loaded or previous alignment "accurate to the current sky" — centre
+one object and the whole model is re-anchored to it. SharpCap topic 4749 says
+the ASCOM driver "asks the main CPWI program to run the sync process", so an
+ASCOM `Sync` very likely goes through that same path and may translate the
+entire PointXP model by the sync offset. That is why the **order matters**:
+`AddAlignmentReference` first, `Sync` second. Once the solved point is in the
+model, the model already predicts that position and the sync offset should be
+near zero. Syncing *before* the push could shift the model by the full
+pointing error. This is an assumption to verify next session (watch the
+PointXP RMS across a Sync), not an established fact.
 
 ### Recommended plugin behavior: Sync + AddAlignmentReference per push
 
@@ -391,9 +492,10 @@ is the model-contribution channel (it's literally what the custom action exists
 for). `Sync` is the reported-position channel. The NexStar protocol documents
 `Sync` as "future GOTO or Get Position commands … use coordinates relative to
 the Sync'd position," not as a model contribution; so the two channels are
-expected to be independent. Together they restore the invariant that NINA's
-`GetCurrentPosition()` reflects reality after every push, even if the user
-slews between pushes via CPWI's UI.
+expected to be *largely* independent (subject to the re-anchor caveat above).
+Together they restore the invariant that NINA's `GetCurrentPosition()`
+reflects reality after every push, even if the user slews between pushes via
+CPWI's UI.
 
 Cost: one extra ASCOM call per push (~milliseconds). No change to model-building
 behavior. No change to how the user navigates the scope.
@@ -422,6 +524,14 @@ better than frozen-at-home, but the next-session protocol should read back
 RA/Dec immediately after a Sync and compare to the synced values to
 characterize this.**
 
+This is less surprising than it first looked: both governing specs describe
+Sync as a *local* anchor. ASCOM: Sync "should only be relied on to improve
+pointing for positions close to the position at which the sync is done" and
+its implementation is "mount dependent". NexStar protocol: Sync improves
+"pointing accuracy to nearby objects". Neither promises that the reported
+position becomes exactly the synced value everywhere, so approximate
+restoration is within spec.
+
 ### Remaining open questions (to settle next session, before merging the code change)
 
 The Sync-per-push design is supported by the log evidence and by the available
@@ -429,7 +539,10 @@ external corroboration, but two clean empirical confirmations are worth
 collecting before locking it in:
 
 1. **The 30-second driver test** — note NINA's RA/Dec, slew significantly via
-   CPWI's UI, wait ~5 s, re-check NINA. Predicted result: **unchanged**. If so,
+   CPWI's UI, wait ~5 s, re-check NINA and compare with **CPWI's own Data bar**
+   (which the manual says updates in real time). Trap: CPWI's UI shows J2000
+   and NINA shows JNow, ~0.4° apart — only a many-degree discrepancy counts.
+   Predicted result: NINA **unchanged**. If so,
    the driver-doesn't-propagate-CPWI-UI-motion conclusion is confirmed directly,
    not just inferred from the log. If NINA's view does update, then the
    propagation works in some cases and we need to characterize when.
@@ -440,7 +553,10 @@ collecting before locking it in:
    23:22:34 Sync in the b66ad4b1 log shows the call being *issued*, but the
    log doesn't include a post-sync read-back, so we don't know if or how
    precisely it actually updated the reported pose — that's what this test
-   isolates. Pair with the RA caveat noted above.
+   isolates. Pair with the RA caveat noted above, and **also watch CPWI's
+   PointXP window (RMS, reference count) across the Sync**: if the model's
+   RMS or anchor changes, Sync is re-anchoring the model, not just refreshing
+   the reported position (see the manual cross-check below).
 
 If both confirm, the Sync-per-push change is unambiguously the right fix and
 ready to implement. If either surprises us, the deeper ASCOM tracing path below
@@ -466,3 +582,82 @@ mount, instrument the layers independently to localize the failure:
    inventing them.
 4. **ASCOM Conform Tool** — validates the driver against the ITelescope spec;
    reserve for cases where position-reporting isn't the only oddity.
+
+---
+
+# CPWI manual cross-check — gaps and assumptions in the plan
+
+The CPWI Software Manual (June 2020 edition, `docs/CPWI Software Manual_0620_Final.pdf`;
+the copy re-uploaded in September 2026 is byte-for-byte the same edition) was
+read end-to-end against the GEM plan. It is the *user* manual — it does not
+document the ASCOM driver — but it settles several things the plan had been
+assuming. Ranked by impact.
+
+1. **ASCOM `Sync` on CPWI is probably "Sync on Object" — a model re-anchor.**
+   Manual p. 13/15 describes Sync as the step that makes a loaded/previous
+   alignment "accurate to the current sky". Combined with the SharpCap report
+   that the driver "asks the main CPWI program to run the sync process", an
+   ASCOM Sync likely shifts the whole PointXP model, not just the reported
+   position. The Sync-per-push design survives because of its order
+   (reference first, so the sync offset is ~0) — see the caveat in the
+   "Deconflicting" section — but that order is now load-bearing and must be
+   commented in code and verified by watching PointXP across a Sync.
+
+2. **Meridian behaviour is user-configurable.** *RA Slewlimits* (−20° past to
+   +40° before the meridian) and *Meridian Sweep* (Favor East / West / Current
+   plus an angle) — Configure Mount, p. 16 — move the flip point and decide
+   which side near-meridian targets land on. The Session-1 "flip at HA = 0" is a
+   default-settings observation. Consequences: `DestinationSideOfPier` is the
+   only safe partitioning source; the `HA = LST − RA` fallback is a display
+   hint; targets within ±20° of the meridian are reachable from either side; the
+   pier-side logic should be tested once with Meridian Sweep enabled. Upside:
+   *Favor Current* is exactly the setting that yields a single deliberate flip
+   when the grid is ordered side-by-side, so the plugin can recommend it. The
+   manual also confirms the pier convention independently: "Favor East … the
+   optical tube will then be positioned on the west side of the mount and
+   pointing east" (target east ⇒ OTA west ⇒ `pierWest`).
+
+3. **The CPWI bootstrapping precondition was never stated.** CPWI forces an
+   alignment-method choice on connect, and after *Delete Alignment* "a new
+   alignment will need to be performed or loaded" (p. 15). For EQ the zero-star
+   path is *Quick Align* (p. 13): home position (counterweight shaft down, tube
+   parallel to the RA axis) and polar aligned. Session 2's "empty CPWI
+   alignment" was presumably a Quick Align but this was not recorded; it is now
+   step 0/2 of the protocol. There is no Quick Align for Alt-Az, so the upstream
+   author's bootstrap is worth asking about.
+
+4. **A third mount class: Alt-Az on an equatorial wedge.** The manual treats it
+   separately ("Wedge Enabled" checkbox; home pose at the altitude index mark
+   pointing *south* in the Northern hemisphere, p. 3; "no meridian flip" and no
+   RA slew limits, p. 16). Over ASCOM this will almost certainly report
+   `AlignmentMode = Polar` (fork), not `GermanPolar`. The `EnableEquatorialMounts`
+   flag lumps it with GEMs; `ReadyToStart` and the grid logic need an explicit
+   `Polar` case — equatorial coordinates, wedge pre-position text, **no pier
+   partitioning**. Added to CLAUDE.md as GEM finding #5.
+
+5. **Home ≠ Park, and the AVX cannot auto-home.** EQ mounts start "at the index
+   marks or homed" (p. 2); home-switch auto-homing is CGX/CGX-L only
+   (consistent with `CanFindHome = False`); the default EQ park position is
+   "OTA on the east side of the mount pointing downwards" (p. 15). The
+   `ReadyToStart` GEM branch should say "set the index marks", not assume the
+   mount is at home after an un-park.
+
+6. **Polar-axis adjustment invalidates the model.** The ASPA procedure (p. 9)
+   ends with delete-and-realign. The protocol order TPPA → clear → build is
+   right; the rule is now explicit. Related: the Add References window shows a
+   model-derived polar error and the manual says to act on it above "a couple of
+   arcminutes" — Celestron's advice for well-populated models, which does not
+   contradict the low-point-count warning in Session-2 finding #5.
+
+7. **Better readout for the 30-second driver test.** CPWI's Data bar shows live
+   RA/Dec and the SkyViewer crosshair "moves in real time as you slew"
+   (p. 6, 9), so the test compares CPWI's display to NINA's — remembering the
+   J2000 (CPWI UI) vs JNow (driver) ~0.4° offset.
+
+Smaller notes: manual guidance is ≥4 points in different quadrants, and "little
+benefit beyond ~10" for StarSense custom points; *GoTo Approach Direction*
+(p. 16–17) should be kept consistent across grid points to reduce backlash
+noise in the model (plate-solve pushes are immune to centring backlash, exactly
+like StarSense's "Solve Here"); record whether *RA + Dec Tracking* was on
+during the 2.6°-polar-error phase of Session 2; the Southern hemisphere is
+untested.

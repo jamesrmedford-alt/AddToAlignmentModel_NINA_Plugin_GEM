@@ -40,6 +40,11 @@ Every standard ASCOM call the plugin makes — `SlewToCoordinatesAsync`, `SyncTo
 - URL: https://ascom-standards.org/newdocs/telescope.html
 - Contains the definitive specification for `SideOfPier`, `DestinationSideOfPier`, `SlewToCoordinatesAsync`, `SyncToCoordinates`, `SupportedActions`, and `Action`. Includes asynchronous-operation notes that matter for GEM flip handling.
 
+### Fetchable fallback — interface source
+The published Help pages are generated from the XML doc comments in the ASCOM Platform source, which can be read directly when the website cannot:
+- https://raw.githubusercontent.com/ASCOMInitiative/ASCOMPlatform/master/ASCOM.DeviceInterface/ITelescopeV3.cs
+- Key passages: `SideOfPier` is defined by mechanical Dec (`pierEast` = |mech Dec| ≤ 90°), "side of pier is, in general, not a useful term"; `DestinationSideOfPier` is the side "if a slew … is performed at the current instant of time"; `SyncToCoordinates` "should only be relied on to improve pointing for positions close to the position at which the sync is done".
+
 ### Conceptual deep dives (linked from the primary page)
 - **"What is the meaning of pointing state in the docs for SideOfPier"** — explains why `SideOfPier` is a misnomer (it's the pointing state, not a literal physical side), and the GEM-vs-fork distinction. Reachable from the Telescope page above; also installed locally by the ASCOM Developer Components installer as **"Pointing State and Side of Pier"**.
 - **"What is DestinationSideOfPier and why would I want to use it?"** — the rationale for predicting pier side before a slew. Same source page.
@@ -88,9 +93,20 @@ CPWI is Celestron's PC control application. Its ASCOM driver is what NINA (and t
 
 ### The `Telescope:AddAlignmentReference` Action — documentation gap
 - A CPWI-specific custom Action invoked through ASCOM's generic `Action(name, parameters)` method. Format observed in plugin: `Action("Telescope:AddAlignmentReference", "{RA}:{Dec}")`.
-- Added to CPWI in late 2020 per release notes; no accompanying public documentation has ever been published by Celestron.
+- Added in **CPWI 2.3.5 (August 2020)** — release-note line "Added ASCOM.Action (Telescope:AddAlignmentReference,ra:dec)"; no accompanying public documentation has ever been published by Celestron.
+  - Release notes as republished by Celestron's UK distributor: https://www.dhinds.co.uk/blogs/news/new-version-release-of-celestron-pwi-software
+  - Celestron's own release-notes page (blocks automated fetch; indexed for the same string): https://www.celestron.com/blogs/general/cpwi-latest-release-notes
 - Origin discussion (Cloudy Nights, December 2020): https://www.cloudynights.com/forums/topic/727389-ascom-console-commands/
+- The `ra:dec` argument must be **JNow** (topocentric), matching the driver's `EquatorialSystem`; CPWI's UI displays J2000, which is a known source of confusion: https://forums.sharpcap.co.uk/viewtopic.php?t=2102 , https://www.cloudynights.com/topic/745029-cpwi-j2000-coordinates-error/
+- Other known users of the action (all Alt-Az oriented; no published EQ/GEM report exists): EAACtrl (https://github.com/Xio1996/EAACtrl), the "CPWI Plate Align" script (https://www.cloudynights.com/topic/864424-cpwi-plate-align/), and SharpCap Pro scripting one-liners.
 - Authoritative verification path: query `SupportedActions` on the CPWI ASCOM driver with the AVX connected in EQ mode. If the string is present, the action is exposed. Whether it actually updates the alignment model in EQ mode must be verified empirically (slew → plate-solve → send action → observe pointing improvement).
+
+### Community reports on the CPWI ASCOM driver (search-snippet level — the forums block automated fetches; verify in a browser before citing)
+- **Sync timeouts** — driver hands the sync to CPWI and errors after ~2 s if CPWI does not answer (normal sync ~0.3 s); also quotes the literal "Method SyncToAltAz is not implemented in this driver": https://forums.sharpcap.co.uk/viewtopic.php?t=4749
+- **Sync does not add to an existing model** — "CPWI, once it creates the initial alignment model, will not accept Sync information to improve the initial alignment model": https://forums.sharpcap.co.uk/viewtopic.php?t=8442
+- **Mini-slew window must be active for Stellarium slews**: https://www.cloudynights.com/topic/788742-using-stellarium-with-cpwi/
+- **Standard NINA + CPWI workflow** (align in CPWI, then drive from NINA): https://theastronoob.com/2021/12/29/celestron-cpwi-ascom-nina/ , https://www.cloudynights.com/topic/865683-cge-cpwi-nina-and-phd2/
+- **Possibly relevant, unread** (may be first-party): https://www.cloudynights.com/forums/topic/972801-cpwi-ascom-driver-problems/ , https://www.cloudynights.com/forums/topic/972794-cpwi-ascom-driver-reporting-incorrect-pier-side/
 
 ### ASCOM Platform + diagnostic tools
 - URL: https://ascom-standards.org/Downloads/Index.htm
