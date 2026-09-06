@@ -31,7 +31,7 @@ namespace AddToAlignmentModel.Tests.TestHelpers {
             this.result = result;
         }
 
-        public override Task<PlateSolveResult> DoSolve(IProgress<ApplicationStatus> progress, int solveAttempts, CancellationToken token) {
+        public override Task<PlateSolveResult> DoSolve(Coordinates expectedCentre, IProgress<ApplicationStatus> progress, int solveAttempts, CancellationToken token) {
             return Task.FromResult(result);
         }
     }

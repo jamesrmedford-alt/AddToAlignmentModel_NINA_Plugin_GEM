@@ -26,6 +26,10 @@ namespace AddToAlignmentModel.Tests {
 
         private const string AddReferenceAction = "Telescope:AddAlignmentReference";
 
+        // SolveDirectToMount takes the expected image centre as a plate-solve hint
+        // (upstream 0.9.0.6). The stubbed solve ignores it, so any value will do.
+        private static readonly Coordinates AnyCentre = new Coordinates(10.0, 20.0, Epoch.J2000, Coordinates.RAType.Degrees);
+
         // CreateModelPoint and GetCurrentLocation transform coordinates to JNOW,
         // which calls NINA's native NOVAS library. That DLL is vendored into the
         // test project (native/NOVAS31lib.dll, copied to External/x64/NOVAS in the
@@ -65,7 +69,7 @@ namespace AddToAlignmentModel.Tests {
             ModelPointCreator creator = harness.Create(Solved());
 
             PlateSolveResult result = await creator.SolveDirectToMount(
-                1, 0, new Progress<ApplicationStatus>(), CancellationToken.None, showDialog: true);
+                AnyCentre, 1, 0, new Progress<ApplicationStatus>(), CancellationToken.None, showDialog: true);
 
             Assert.True(result.Success);
             harness.Telescope.Verify(t => t.Action(AddReferenceAction, It.IsAny<string>()), Times.Once);
@@ -77,7 +81,7 @@ namespace AddToAlignmentModel.Tests {
             ModelPointCreator creator = harness.Create(Failed());
 
             PlateSolveResult result = await creator.SolveDirectToMount(
-                1, 0, new Progress<ApplicationStatus>(), CancellationToken.None, showDialog: true);
+                AnyCentre, 1, 0, new Progress<ApplicationStatus>(), CancellationToken.None, showDialog: true);
 
             Assert.False(result.Success);
             harness.Telescope.Verify(t => t.Action(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
@@ -100,7 +104,7 @@ namespace AddToAlignmentModel.Tests {
                 .Returns(string.Empty);
             ModelPointCreator creator = harness.Create(result);
 
-            await creator.SolveDirectToMount(1, 0, new Progress<ApplicationStatus>(), CancellationToken.None, showDialog: true);
+            await creator.SolveDirectToMount(AnyCentre, 1, 0, new Progress<ApplicationStatus>(), CancellationToken.None, showDialog: true);
 
             Assert.NotNull(payload);
             string[] parts = payload.Split(':');
